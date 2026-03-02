@@ -1,0 +1,107 @@
+@import "tailwindcss";
+
+/* Plus Jakarta Sans Font */
+* {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+body {
+  /* Note: Background is handled via ::before for better mobile support */
+  min-height: 100vh;
+  position: relative;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+/* Bulletproof Fixed Background for Mobile & Desktop */
+body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+  /* Soft gradient background - lighter and more appealing */
+  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 25%, #d1fae5 50%, #ccfbf1 75%, #e0f2fe 100%);
+  pointer-events: none;
+}
+
+@layer utilities {
+  .glass {
+    @apply bg-white/60 backdrop-blur-xl border border-white/40 shadow-sm;
+  }
+  
+  .glass-card {
+    /* Premium Glass with lighter colors */
+    @apply bg-gradient-to-br from-white/85 to-white/75 backdrop-blur-2xl border border-white/60 shadow-lg rounded-2xl transition-all duration-300;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.02);
+  }
+  
+  .glass-card:hover {
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.03);
+    transform: translateY(-2px);
+  }
+  
+  .glass-header {
+    @apply bg-white/80 backdrop-blur-xl border-b border-white/50 sticky top-0 z-50;
+    box-shadow: 0 2px 15px rgba(0, 0, 0, 0.03);
+  }
+
+  /* Light color scheme utilities */
+  .text-primary-light {
+    @apply text-emerald-600;
+  }
+  
+  .bg-primary-light {
+    @apply bg-emerald-50;
+  }
+  
+  .border-primary-light {
+    @apply border-emerald-100;
+  }
+
+  .text-shadow {
+    text-shadow: 0 1px 2px rgba(0,0,0,0.08);
+  }
+  
+  .text-shadow-sm {
+    text-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  }
+
+  /* Smooth transitions */
+  .transition-smooth {
+    @apply transition-all duration-300 ease-out;
+  }
+
+  /* Hide scrollbar for Chrome, Safari and Opera */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Hide scrollbar for IE, Edge and Firefox */
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+/* Global Scrollbar Styling - subtle and light */
+::-webkit-scrollbar {
+  width: 6px;
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(16, 185, 129, 0.2);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(16, 185, 129, 0.4);
+}
+
+html {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(16, 185, 129, 0.2) transparent;
+  -ms-overflow-style: none;
+}
