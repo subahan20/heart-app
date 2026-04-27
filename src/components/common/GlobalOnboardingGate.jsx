@@ -4,7 +4,7 @@ import { supabase } from '../../services/supabase'
 import { useHealthProfile } from '../../hooks/useHealthProfile'
 
 export function GlobalOnboardingGate() {
-  const { profile, loading } = useHealthProfile()
+  const { activeProfile: profile, loading } = useHealthProfile()
   const [authUser, setAuthUser] = useState(null)
   const [showModal, setShowModal] = useState(false)
   const location = useLocation()
@@ -20,17 +20,12 @@ export function GlobalOnboardingGate() {
   let needsOnboarding = false
 
   if (!loading) {
-    if (!profile || !profile.full_name || !profile.age) {
+    // Primary check: if onboarding_complete is explicitly true, DO NOT show the modal
+    if (profile?.onboarding_complete) {
+      needsOnboarding = false
+    } else if (!profile || !profile.name || !profile.age) {
+      // Secondary check: if missing profile details, we need onboarding
       needsOnboarding = true
-    } else if (authUser && authUser.user_metadata?.full_name) {
-      // Check if the auth name is completely different from the profile name
-      const authName = authUser.user_metadata.full_name.trim().toLowerCase()
-      const profileName = profile.full_name.trim().toLowerCase()
-      
-      // If they are strictly different, user requested to treat it as a new patient
-      if (authName !== profileName) {
-        needsOnboarding = true
-      }
     }
   }
 
@@ -42,6 +37,9 @@ export function GlobalOnboardingGate() {
       // Find if they clicked an interactive element
       const target = e.target.closest('button, a, [role="button"], input, select, textarea, .cursor-pointer')
       
+      // EXCEPTION: If the user is clicking the Google Auth button, let them pass!
+      if (e.target.closest('#google-auth-btn')) return
+
       // If the click is inside our own modal, allow it
       if (e.target.closest('#onboarding-gate-modal')) return
 

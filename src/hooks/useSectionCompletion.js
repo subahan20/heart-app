@@ -43,22 +43,30 @@ function applyUserFilter(query, user, guestSessionId) {
 export function useSectionCompletion() {
   const queryClient = useQueryClient()
   const today = TODAY()
+  
+  // MINIMALIST SOURCE OF TRUTH: localStorage
+  const profileId = localStorage.getItem('activeProfileId')
 
   // ── Query: today's daily_tracking row ─────────────────────────────────────
   const trackingQuery = useQuery({
-    queryKey: ['daily_tracking', today],
+    queryKey: ['daily_tracking', today, profileId],
     queryFn: async () => {
       const { user, guestSessionId } = await getUserIdentity()
       if (!user && !guestSessionId) return null
 
       let query = supabase
-        .from('daily_tracking')
+        .from('user_daily_tracking')
         .select(
           'id, date, diet_completed, exercise_completed, sleep_completed, water_completed, mental_completed, all_completed'
         )
         .eq('date', today)
+      
+      if (profileId) {
+        query = query.eq('profile_id', profileId)
+      } else {
+        query = applyUserFilter(query, user, guestSessionId)
+      }
 
-      query = applyUserFilter(query, user, guestSessionId)
       const { data, error } = await query.maybeSingle()
 
       if (error) {
@@ -74,21 +82,23 @@ export function useSectionCompletion() {
 
   // ── Query: current streak ─────────────────────────────────────────────────
   const streakQuery = useQuery({
-    queryKey: ['userStreak', aiService.getChatSessionId()],
+    queryKey: ['userStreak', aiService.getChatSessionId(), profileId],
     queryFn: async () => {
       const { user, guestSessionId } = await getUserIdentity()
       if (!user && !guestSessionId) return null
 
       let query = supabase
-        .from('patient_streak')
+        .from('user_streaks')
         .select(
-          'streak_count, daily_completed, last_completed_date, patient_details!inner(user_id, guest_session_id)'
+          'streak_count, daily_completed, last_completed_date'
         )
 
-      if (user) {
-        query = query.eq('patient_details.user_id', user.id)
+      if (profileId) {
+        query = query.eq('profile_id', profileId)
+      } else if (user) {
+        query = query.eq('user_id', user.id).is('profile_id', null)
       } else {
-        query = query.eq('patient_details.guest_session_id', guestSessionId)
+        query = query.eq('guest_session_id', guestSessionId)
       }
 
       const { data, error } = await query.maybeSingle()
@@ -125,6 +135,7 @@ export function useSectionCompletion() {
       const payload = {
         user_id: user?.id ?? null,
         guest_session_id: guestSessionId,
+        profile_id: profileId || null,
         date: today,
         [columnName]: true,
         updated_at: new Date().toISOString(),
@@ -132,9 +143,9 @@ export function useSectionCompletion() {
 
       // Upsert: creates the row if it doesn't exist yet, updates if it does.
       const { data, error } = await supabase
-        .from('daily_tracking')
+        .from('user_daily_tracking')
         .upsert(payload, {
-          onConflict: 'user_id,guest_session_id,date',
+          onConflict: profileId ? 'profile_id,date' : 'user_id,guest_session_id,date',
           ignoreDuplicates: false,
         })
         .select()
@@ -173,26 +184,27 @@ export function useSectionCompletion() {
           'success',
           `${section.charAt(0).toUpperCase() + section.slice(1)} Completed! 🎉`,
           SUCCESS_MESSAGES[section] ?? `${section} completed for today!`,
-          { task: section, event: 'success', sent_by: 'client' }
+          { task: section, event: 'success', sent_by: 'client' },
+          profileId
         )
 
         // Mark success_sent flag in DB so edge function doesn't double-send
-        if (userId) {
-          await supabase.rpc('mark_task_success_sent', {
-            p_user_id: userId,
-            p_date:    today,
-            p_task:    section,
-          })
-        }
+        await supabase.rpc('mark_task_success_sent', {
+          p_profile_id: profileId || null,
+          p_user_id:    userId,
+          p_guest_id:   guestSessionId,
+          p_date:       today,
+          p_task:       section,
+        })
       } catch (notifErr) {
         // Non-critical — edge function will handle it on next run
         console.warn('[useSectionCompletion] Success notification failed (non-fatal):', notifErr)
       }
 
       // Invalidate tracking & streak queries so UI re-renders
-      queryClient.invalidateQueries({ queryKey: ['daily_tracking', today] })
-      queryClient.invalidateQueries({ queryKey: ['userStreak'] })
-      queryClient.invalidateQueries({ queryKey: ['daily_data', today] })
+      queryClient.invalidateQueries({ queryKey: ['daily_tracking', today, profileId] })
+      queryClient.invalidateQueries({ queryKey: ['userStreak', aiService.getChatSessionId(), profileId] })
+      queryClient.invalidateQueries({ queryKey: ['daily_data', today, profileId] })
 
       // Emit legacy events for backward compatibility
       const legacyEventMap = {

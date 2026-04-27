@@ -1,6 +1,6 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { toast } from 'react-toastify'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { DISEASE_LABELS, ACTIVITY_LEVELS } from '../constants/health'
 import { useHealthProfile } from '../hooks/useHealthProfile'
 import { useTransformation } from '../hooks/useTransformation'
@@ -8,6 +8,7 @@ import { supabaseNotificationService } from '../services/supabaseNotifications'
 import { aiService } from '../services/aiService'
 import { supabase } from '../services/supabase'
 import { User, Activity, Heart, CheckCircle2, ChevronRight, ChevronLeft, Droplets, Calendar, Weight, Ruler } from 'lucide-react'
+import { userService } from '../services/userService'
 
 // ── Step metadata ──────────────────────────────────────────────
 const STEPS = [
@@ -27,10 +28,14 @@ const BMI_DARK_COLORS = {
 
 export default function Onboarding() {
   const navigate = useNavigate()
-  const { updateProfile, loading: profileLoading } = useHealthProfile()
+  const { activeProfile: profile, updateProfile, loading: profileLoading } = useHealthProfile()
   const { generateFirstPlan } = useTransformation()
   const [loading, setLoading] = useState(false)
   const [step, setStep] = useState(1)
+  const location = useLocation()
+  const mode = new URLSearchParams(location.search).get('mode')
+  const isAddMode = mode === 'add'
+
   const [formData, setFormData] = useState({
     name: '', age: '', gender: '',
     height: '',       // stored in user's chosen unit until submit
@@ -41,6 +46,9 @@ export default function Onboarding() {
   })
 
   const set = (field, value) => setFormData(p => ({ ...p, [field]: value }))
+
+  // ── Manual Input Only ──
+  // User input in the onboarding form is preserved; no auto-filling from Auth metadata.
   const toggleDisease = (d) =>
     setFormData(p => ({
       ...p,
@@ -97,6 +105,28 @@ export default function Onboarding() {
     }
   }
 
+  // ── Pre-fill Form Data ──
+  useEffect(() => {
+    if (profile && !isAddMode && !formData.name) {
+      setFormData({
+        name: profile.name || '',
+        age: profile.age || '',
+        gender: profile.gender || '',
+        height: profile.height || '',
+        heightUnit: 'cm',
+        weight: profile.weight || '',
+        activityLevel: profile.activity_level || '',
+        sleepHours: profile.sleep_hours || '',
+        stressLevel: profile.stress_level || 3,
+        diseases: profile.diseases || [],
+        systolic: profile.systolic || '',
+        diastolic: profile.diastolic || '',
+        pulse: profile.pulse || '',
+        bloodSugar: profile.blood_sugar || ''
+      })
+    }
+  }, [profile, isAddMode])
+
   const handleSubmit = async () => {
     try {
       setLoading(true)
@@ -109,13 +139,18 @@ export default function Onboarding() {
       const normWeightKg = parseFloat(formData.weight) || 0
 
       const profileData = { ...formData, height: normHeightCm, weight: normWeightKg, bmi }
-      await updateProfile(profileData)
+      
+      // CRITICAL: Pass profile.id so useHealthProfile knows which row to UPDATE
+      // If isAddMode is true, updateProfile will ignore the ID and INSERT a new row
+      await updateProfile(profile?.id, profileData, isAddMode)
+      
       toast.info('🚀 Personalizing your heart-health plan...')
       await generateFirstPlan(profileData)
       await checkAndCreateAlerts(formData)
 
       toast.success('✅ Profile saved and Plan generated!')
-      navigate('/')
+      await userService.completeOnboarding()
+      navigate('/dashboard')
     } catch (e) {
       toast.error('❌ ' + e.message)
     } finally {
@@ -136,24 +171,10 @@ export default function Onboarding() {
         {/* Dark Overlays */}
         <div className="absolute inset-0 bg-slate-950/80"></div>
         <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/60 to-transparent"></div>
-        <div className="absolute top-0 left-1/4 w-[600px] h-[600px] bg-emerald-600/30 rounded-full mix-blend-screen filter blur-[120px] animate-blob"></div>
-        <div className="absolute bottom-0 right-1/4 w-[500px] h-[500px] bg-teal-600/30 rounded-full mix-blend-screen filter blur-[100px] animate-blob animation-delay-2000"></div>
-        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 mix-blend-overlay"></div>
       </div>
 
       <div className="relative z-10 w-full max-w-2xl mx-auto flex flex-col gap-8">
         
-        {/* Brand Header */}
-        <div className="flex flex-col items-center justify-center space-y-2 text-center">
-          <div className="w-14 h-14 bg-gradient-to-br from-emerald-400 to-teal-600 rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-500/30 transform rotate-3">
-            <Heart className="w-8 h-8 text-white fill-white/20" />
-          </div>
-          <h1 className="text-3xl sm:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-300 to-teal-200 tracking-tight">
-            HeartSafe
-          </h1>
-          <p className="text-slate-400 text-sm sm:text-base font-medium">Your personalized journey to better heart health.</p>
-        </div>
-
         {/* The Glass Container */}
         <div className="bg-slate-900/50 backdrop-blur-2xl border border-slate-700/50 rounded-3xl shadow-2xl shadow-black/50 overflow-hidden relative">
           
@@ -192,8 +213,12 @@ export default function Onboarding() {
               {step === 1 && (
                 <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
                   <div className="text-center mb-8">
-                    <h2 className="text-2xl font-bold text-white mb-2">Let's get to know you</h2>
-                    <p className="text-slate-400 text-sm">Basic details help us calibrate your unique baseline.</p>
+                    <h2 className="text-2xl font-bold text-white mb-2">
+                      {isAddMode ? 'Add Family Member' : "Let's get to know you"}
+                    </h2>
+                    <p className="text-slate-400 text-sm">
+                      {isAddMode ? 'Create a separate health profile for someone else.' : 'Basic details help us calibrate your unique baseline.'}
+                    </p>
                   </div>
                   
                   <div className="space-y-5">

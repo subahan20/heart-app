@@ -1,5 +1,11 @@
 import { supabase } from './supabase'
 
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API || import.meta.env.GEMINI_API
+
+
+
+ 
+
 export const aiService = {
   generateDietPlan: async (userProfile) => {
     try {
@@ -110,7 +116,7 @@ export const aiService = {
 
   chatWithAssistant: async (message, history, userProfile) => {
     try {
-      const geminiApiKey = import.meta.env.VITE_GEMINI_API || import.meta.env.GEMINI_API
+      const geminiApiKey = GEMINI_API_KEY
       if (!geminiApiKey) {
         throw new Error('AI service unavailable: No API key configured')
       }
@@ -146,7 +152,7 @@ export const aiService = {
       }
 
       // Call Gemini API
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${geminiApiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody)
@@ -260,6 +266,9 @@ export const aiService = {
   analyzeFoodImage: async (imageFile, imageUrl = null) => {
     try {
       const base64withMeta = await aiService.resizeImage(imageFile)
+      if (!base64withMeta || typeof base64withMeta !== 'string') {
+        throw new Error('Failed to process image data')
+      }
       const payload = imageUrl ? { imageUrl } : { image: base64withMeta }
       
       const functionName = 'analyze-food'
@@ -271,6 +280,7 @@ export const aiService = {
         })
 
         if (!error && data && !data.error) {
+          console.log('AI Analysis successful via Edge Function')
           return data
         }
 
@@ -278,30 +288,30 @@ export const aiService = {
         if (error?.message?.includes('404') || error?.status === 404) {
           console.warn('Edge Function not found (404). Falling back to client-side AI.')
         } else if (error) {
-          console.error('Edge Function Error:', error)
-          throw error
+          // Log but don't throw, so we can try the fallback
+          console.warn('Edge Function invocation error, trying fallback:', error.message)
         }
       } catch (invokeError) {
-        // Detailed log for debugging, but use warn to avoid alarming user if simply not deployed
-        console.warn('Edge Function unreachable (Normal if not deployed):', invokeError.message)
+        console.warn('Edge Function unreachable, trying fallback:', invokeError.message)
       }
 
       // 3. Fallback: Client-side AI
-      const geminiApiKey = import.meta.env.VITE_GEMINI_API || import.meta.env.GEMINI_API
+      const geminiApiKey = GEMINI_API_KEY
       if (!geminiApiKey) {
+        console.error('DEBUG: Fallback failed - GEMINI_API_KEY is missing.')
         throw new Error('Edge Function failed and no client-side API key found.')
       }
 
       const [meta, base64Data] = base64withMeta.split(',')
       const mimeType = meta.match(/:(.*?);/)?.[1] || 'image/jpeg'
 
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${geminiApiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{
             parts: [
-              { text: "Analyze the food in the image and provide a strict JSON response. CRITICAL: Analyze the TOTAL quantity shown in the image, not per unit. Return JSON with: name, type (breakfast/lunch/dinner/snack), calories (TOTAL number for the whole portion), protein (number), carbs (number), fat (number), estimated_weight (string), and heart_health_advice (string)." },
+              { text: "Analyze the food in the image and provide a strict JSON response. CRITICAL: Analyze the TOTAL quantity shown in the image, not per unit. Return JSON with: name, type (breakfast, lunch, snacks, or dinner), calories (TOTAL number for the whole portion), protein (number), carbs (number), fat (number), estimated_weight (string), and heart_health_advice (string)." },
               { 
                 inlineData: { 
                   mimeType: mimeType, 
@@ -311,7 +321,8 @@ export const aiService = {
             ]
           }],
           generationConfig: { 
-            responseMimeType: "application/json" 
+            responseMimeType: "application/json",
+            temperature: 0.7 
           }
         })
       })
@@ -327,7 +338,9 @@ export const aiService = {
         throw new Error('Client-side AI failed to respond - no content received')
       }
       
-      return JSON.parse(text)
+      // Clean potential markdown if Gemini sends it despite setting responseMimeType
+      const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim()
+      return JSON.parse(jsonStr)
 
     } catch (error) {
       console.error('Total AI Analysis Failure:', error)
@@ -345,35 +358,29 @@ export const aiService = {
           body: { manualMeals: mealNames }
         })
 
-        if (error) {
-          throw new Error(`Edge Function failed: ${error.message}`)
-        }
-        
-        if (data?.error) {
-          throw new Error(`Edge Function error: ${data.error}`)
-        }
-        
-        if (data && !data.error) {
+        if (!error && data && !data.error) {
           // Validate that we have actual nutritional data
           if (data.calories && data.protein && data.heart_health_advice) {
+            console.log('Manual Meal Analysis successful via Edge Function')
             return data
           } else {
             console.warn('Edge Function returned incomplete data:', data)
           }
+        } else if (error) {
+          console.warn('Edge Function manual analysis failed, trying fallback:', error.message)
         }
       } catch (invokeError) {
-        // Detailed log for debugging, but use warn to avoid alarming user if simply not deployed
-        console.warn('Edge Function unreachable (Normal if not deployed):', invokeError.message)
+        console.warn('Edge Function unreachable for manual analysis, trying fallback:', invokeError.message)
       }
 
       // 2. Fallback to Client AI
-      const geminiApiKey = import.meta.env.VITE_GEMINI_API || import.meta.env.GEMINI_API
+      const geminiApiKey = GEMINI_API_KEY
       if (!geminiApiKey) {
         console.error('No Gemini API key available for fallback')
         throw new Error('AI service unavailable: No API key configured')
       }
 
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${geminiApiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -384,7 +391,10 @@ export const aiService = {
               Fields: name, calories, protein, carbs, fat, estimated_weight, heart_health_advice.`
             }]
           }],
-          generationConfig: { responseMimeType: "application/json" }
+          generationConfig: { 
+            responseMimeType: "application/json",
+            temperature: 0.7 
+          }
         })
       })
 
@@ -425,7 +435,7 @@ export const aiService = {
 
   // ── AI Meal Suggestions (per meal type) ──────────────────────────────────────
   getMealSuggestions: async (mealType, userProfile = null) => {
-    const geminiApiKey = import.meta.env.VITE_GEMINI_API || import.meta.env.GEMINI_API
+    const geminiApiKey = GEMINI_API_KEY
 
     const mealContext = {
       breakfast: 'morning breakfast (6 AM – 12 PM), energizing and nutritious to start the day',
@@ -496,13 +506,16 @@ Return ONLY a JSON array (no markdown) like:
 
     try {
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${geminiApiKey}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { responseMimeType: 'application/json', temperature: 0.7 },
+            generationConfig: { 
+              responseMimeType: 'application/json', 
+              temperature: 0.7 
+            },
           }),
         }
       )
@@ -536,7 +549,7 @@ Return ONLY a JSON array (no markdown) like:
 
   generateExerciseInsights: async (exerciseData, profile) => {
     try {
-      const geminiApiKey = import.meta.env.VITE_GEMINI_API || import.meta.env.GEMINI_API
+      const geminiApiKey = GEMINI_API_KEY
       if (!geminiApiKey) {
         console.warn('No Gemini API key available, using mock data')
         return aiService.getMockExerciseInsights(exerciseData)
@@ -563,14 +576,14 @@ Return ONLY a JSON array (no markdown) like:
         "improvement_tips": "tips to improve next time"
       }`
 
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${geminiApiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{
             parts: [{ text: prompt }]
           }],
-          generationConfig: { responseMimeType: "application/json" }
+          generationConfig: { temperature: 0.7 }
         })
       })
 
@@ -593,7 +606,7 @@ Return ONLY a JSON array (no markdown) like:
 
   generateWeeklyTransformationPlan: async (userProfile, progressData, weekNumber) => {
     try {
-      const geminiApiKey = import.meta.env.VITE_GEMINI_API || import.meta.env.GEMINI_API
+      const geminiApiKey = GEMINI_API_KEY
       if (!geminiApiKey) {
         throw new Error('AI service unavailable: No API key configured')
       }
@@ -658,14 +671,14 @@ Return ONLY a JSON object with this exact structure:
   "motivational_message": "A short inspiring message"
 }`
 
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${geminiApiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: {
-            temperature: 0.7,
-            responseMimeType: "application/json"
+            responseMimeType: "application/json",
+            temperature: 0.7
           }
         })
       })

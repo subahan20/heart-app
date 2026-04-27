@@ -10,6 +10,9 @@ import { aiService } from '../services/aiService';
  */
 export const useWeeklyRewards = (streakCount) => {
   const [newReward, setNewReward] = useState(null);
+  
+  // MINIMALIST SOURCE OF TRUTH: localStorage
+  const profileId = localStorage.getItem('activeProfileId')
 
   useEffect(() => {
     if (!streakCount || streakCount === 0 || streakCount % 7 !== 0) {
@@ -26,13 +29,20 @@ export const useWeeklyRewards = (streakCount) => {
         // --- SUCCESS REWARD LOGIC ---
         if (streakCount > 0 && streakCount % 7 === 0) {
           // Check if we already gave a reward for this specific milestone
-          const { data: existingReward } = await supabase
+          let query = supabase
             .from('notifications')
             .select('id')
             .eq('category', 'reward')
             .eq('type', 'weekly_perfect')
             .contains('metadata', { streak_milestone: streakCount })
-            .maybeSingle();
+          
+          if (profileId) {
+            query = query.eq('profile_id', profileId)
+          } else {
+            query = query.eq(user ? 'user_id' : 'guest_session_id', user ? user.id : guestSessionId)
+          }
+
+          const { data: existingReward } = await query.maybeSingle();
 
           if (!existingReward) {
             // Generate an enthusiastic reward
@@ -74,6 +84,7 @@ export const useWeeklyRewards = (streakCount) => {
               .insert({
                 user_id: user?.id,
                 guest_session_id: guestSessionId,
+                profile_id: profileId,
                 date: new Date().toISOString().split('T')[0],
                 category: 'reward',
                 type: 'weekly_perfect',
@@ -87,7 +98,7 @@ export const useWeeklyRewards = (streakCount) => {
                 }
               })
               .select()
-              .maybeSingle(); // Changed from .single() to .maybeSingle()
+              .maybeSingle();
 
             if (!error && reward) {
               setNewReward(reward);
@@ -97,11 +108,17 @@ export const useWeeklyRewards = (streakCount) => {
 
         // --- ENCOURAGEMENT LOGIC (For missed days) ---
         // If a week has passed since starting/last check-in, but streak is NOT at next milestone
-        const profileResponse = await supabase
-          .from('patient_details')
+        let profileQuery = supabase
+          .from('profiles')
           .select('transformation_start_date, last_weekly_checkin')
-          .eq(user ? 'user_id' : 'guest_session_id', user ? user.id : guestSessionId)
-          .maybeSingle(); // Changed from .single() to .maybeSingle()
+        
+        if (profileId) {
+          profileQuery = profileQuery.eq('id', profileId)
+        } else {
+          profileQuery = profileQuery.eq(user ? 'user_id' : 'guest_session_id', user ? user.id : guestSessionId)
+        }
+
+        const profileResponse = await profileQuery.maybeSingle();
 
         const p = profileResponse.data;
         if (p) {
@@ -118,13 +135,20 @@ export const useWeeklyRewards = (streakCount) => {
               const weekNum = Math.floor((new Date() - (startDate || new Date())) / oneWeek) + 1;
               
               // Only send one encouragement per week
-              const { data: existingEncouragement } = await supabase
+              let encQuery = supabase
                 .from('notifications')
                 .select('id')
                 .eq('category', 'reward')
                 .eq('type', 'weekly_encouragement')
                 .contains('metadata', { week_number: weekNum })
-                .maybeSingle();
+              
+              if (profileId) {
+                encQuery = encQuery.eq('profile_id', profileId)
+              } else {
+                encQuery = encQuery.eq(user ? 'user_id' : 'guest_session_id', user ? user.id : guestSessionId)
+              }
+
+              const { data: existingEncouragement } = await encQuery.maybeSingle();
 
               if (!existingEncouragement) {
                 const encouragementTitles = [
@@ -150,6 +174,7 @@ export const useWeeklyRewards = (streakCount) => {
                   .insert({
                     user_id: user?.id,
                     guest_session_id: guestSessionId,
+                    profile_id: profileId,
                     date: new Date().toISOString().split('T')[0],
                     category: 'reward',
                     type: 'weekly_encouragement',
@@ -162,7 +187,7 @@ export const useWeeklyRewards = (streakCount) => {
                     }
                   })
                   .select()
-                  .maybeSingle(); // Changed from .single() to .maybeSingle()
+                  .maybeSingle();
 
                 if (!encError && encouragement) {
                   setNewReward(encouragement);

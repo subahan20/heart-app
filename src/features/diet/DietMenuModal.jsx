@@ -129,10 +129,12 @@ export default function DietMenuModal({ onClose, selectedDate, dateRange, rangeD
         imageUrl = await storageService.uploadFoodImage(base64, user?.id)
       } catch {}
       const data = await aiService.analyzeFoodImage(file, imageUrl)
+      if (!data) throw new Error('No analysis data received')
+
       if (data.heart_health_advice) setAiAdvice(data.heart_health_advice)
       setSelectedItems(prev => [...prev, {
         name:     data.name     || 'Unknown Food',
-        calories: data.calories || 0,
+        calories: Number(data.calories) || 0,
         protein:  data.protein,
         carbs:    data.carbs,
         fat:      data.fat,
@@ -141,7 +143,11 @@ export default function DietMenuModal({ onClose, selectedDate, dateRange, rangeD
         imageUrl,
         isAI: true,
       }])
-      if (data.type) setSelectedMealType(data.type)
+      if (data.type) {
+        const type = data.type.toLowerCase().trim()
+        const normalized = type.endsWith('s') ? type : type + 's'
+        if (SLOT_META[normalized]) setSelectedMealType(normalized)
+      }
     } catch { toast.error('Failed to analyze image') }
     finally   { setIsAnalyzing(false); event.target.value = '' }
   }
@@ -167,7 +173,12 @@ export default function DietMenuModal({ onClose, selectedDate, dateRange, rangeD
     const totalCalories = selectedItems.reduce((s, i) => s + i.calories, 0)
 
     try {
-      await saveDietData({ date: selectedDate, meals: grouped, totalCalories, foodImage: latestImage })
+      await saveDietData({ 
+        date: selectedDate, 
+        meals: grouped, 
+        total_calories: totalCalories, 
+        food_image: latestImage 
+      })
       onClose()
       setSelectedItems([])
     } catch (err) {
@@ -176,8 +187,8 @@ export default function DietMenuModal({ onClose, selectedDate, dateRange, rangeD
   }
 
   const totalCalories = selectedItems.reduce((s, i) => s + i.calories, 0)
-  const meta   = SLOT_META[selectedMealType]
-  const colors = COLOR_MAP[meta.color]
+  const meta   = SLOT_META[selectedMealType] || SLOT_META.lunch
+  const colors = COLOR_MAP[meta.color] || COLOR_MAP.green
 
   // ── Range mode ── 
   if (isRangeMode) {

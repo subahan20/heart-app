@@ -45,48 +45,6 @@ export default function CelebrationOverlays({
         </div>
       )}
 
-      {/* Goal Specific Milestone (Centered) */}
-      {congratsType && (
-        <div className="fixed inset-0 z-[10000] flex items-center justify-center p-6">
-          <div className="absolute inset-0 bg-emerald-900/30 backdrop-blur-md animate-in fade-in duration-500"></div>
-          
-          <div className="relative animate-in zoom-in-95 slide-in-from-bottom-10 duration-500 flex flex-col items-center max-w-sm w-full">
-            <div className="bg-white rounded-[2.5rem] p-10 shadow-[0_25px_60px_rgba(0,0,0,0.15)] border-4 border-emerald-500 flex flex-col items-center w-full text-center relative overflow-hidden">
-              
-              {/* Animated Sparkles in Background */}
-              <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-emerald-500 via-teal-400 to-green-500"></div>
-              
-              <div className="w-28 h-28 bg-emerald-50 rounded-full flex items-center justify-center mb-8 shadow-inner border-2 border-emerald-100 relative">
-                <CheckCircle2 className="w-16 h-16 text-emerald-600" />
-                <div className="absolute -top-2 -right-2 bg-yellow-400 rounded-full p-2 shadow-lg animate-bounce">
-                  <Star className="w-5 h-5 text-white fill-white" />
-                </div>
-              </div>
-
-              <h2 className="text-3xl font-black text-slate-900 mb-3 tracking-tight">
-                {getCongratsMessage(congratsType).title}
-              </h2>
-              <p className="text-slate-500 text-lg font-medium leading-tight">
-                {getCongratsMessage(congratsType).message}
-              </p>
-
-              <div className="mt-8 flex items-center gap-3">
-                <div className="h-1.5 w-12 bg-emerald-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-emerald-500 w-full animate-progress-fast"></div>
-                </div>
-                <div className="text-emerald-600 font-black text-sm uppercase tracking-widest">Target Met</div>
-                <div className="h-1.5 w-12 bg-emerald-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-emerald-500 w-full animate-progress-fast"></div>
-                </div>
-              </div>
-
-              {/* Floating Sparkles */}
-              <Sparkles className="absolute top-10 right-10 w-6 h-6 text-emerald-400 animate-pulse" />
-              <Sparkles className="absolute bottom-10 left-10 w-4 h-4 text-yellow-400 animate-pulse delay-500" />
-            </div>
-          </div>
-        </div>
-      )}
     </>
   )
 }

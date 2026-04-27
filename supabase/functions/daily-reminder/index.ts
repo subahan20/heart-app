@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { SignJWT, importPKCS8 } from 'https://esm.sh/jose@5.2.0'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // daily-reminder/index.ts  (v2 — Smart per-task notification system)
@@ -98,6 +99,128 @@ function randomFrom<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)]
 }
 
+// FCM Configuration
+const FCM_PROJECT_ID = Deno.env.get('FCM_PROJECT_ID')
+const FCM_SERVICE_ACCOUNT = Deno.env.get('FCM_SERVICE_ACCOUNT')
+
+// ── FCM Push Trigger (HTTP v1) ────────────────────────────────────────────────
+async function triggerFCMPush(token: string, title: string, body: string, data: Record<string, string> = {}) {
+  if (!FCM_PROJECT_ID || !FCM_SERVICE_ACCOUNT) {
+    console.error("[fcm] Missing FCM_PROJECT_ID or FCM_SERVICE_ACCOUNT secrets")
+    return
+  }
+
+  try {
+    const accessToken = await getGoogleAccessToken(FCM_SERVICE_ACCOUNT);
+    const messagePayload: any = {
+      message: {
+        token,
+        notification: { title, body },
+        data: {
+          ...data,
+          title,
+          body,
+          sent_at: new Date().toISOString()
+        }
+      }
+    };
+
+    const res = await fetch(`https://fcm.googleapis.com/v1/projects/${FCM_PROJECT_ID}/messages:send`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(messagePayload)
+    });
+
+    const resData = await res.json();
+    if (!res.ok) console.error("[fcm] Send error:", resData)
+    else console.log("[fcm] Send success:", resData.name)
+  } catch (err) {
+    console.error("[fcm] Fatal:", err)
+  }
+}
+
+// ── Google OAuth2 Token Exchange ──────────────────────────────────────────────
+async function getGoogleAccessToken(serviceAccountJson: string): Promise<string> {
+  const sa = JSON.parse(serviceAccountJson)
+  const privateKey = sa.private_key
+  const clientEmail = sa.client_email
+  const now = Math.floor(Date.now() / 1000)
+  
+  const jwt = await new SignJWT({
+    iss: clientEmail,
+    sub: clientEmail,
+    aud: "https://oauth2.googleapis.com/token",
+    iat: now,
+    exp: now + 3600,
+    scope: "https://www.googleapis.com/auth/cloud-platform"
+  })
+    .setProtectedHeader({ alg: 'RS256' })
+    .sign(await importPKCS8(privateKey, 'RS256'))
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:jwt-bearer",
+      assertion: jwt
+    })
+  })
+
+  const data = await res.json()
+  if (!res.ok) throw new Error(`OAuth error: ${JSON.stringify(data)}`)
+  return data.access_token
+}
+
+async function sendNotification(supabase: any, user_id: string | null, guest_session_id: string | null, title: string, message: string, task: string, type: string, today: string, slot: string, metadata: any, profile_id: string | null = null) {
+  // 1. Insert into DB
+  const { error } = await supabase.from('notifications').insert({
+    user_id,
+    guest_session_id,
+    profile_id,
+    date:             today,
+    category:         task,
+    type,
+    slot,
+    title,
+    message,
+    is_read:          false,
+    is_ai_generated:  false,
+    metadata,
+  })
+
+  if (error) {
+    console.error(`[daily-reminder] notification insert error:`, error.message)
+    return
+  }
+
+  // 2. Fetch FCM token
+  // If we have a profile_id, use it. Otherwise fallback to user/guest.
+  let tokenQuery = supabase.from('profiles').select('fcm_token')
+  if (profile_id) {
+    tokenQuery = tokenQuery.eq('id', profile_id)
+  } else if (user_id) {
+    tokenQuery = tokenQuery.eq('user_id', user_id)
+  } else {
+    tokenQuery = tokenQuery.eq('guest_session_id', guest_session_id).is('user_id', null)
+  }
+
+  const { data: profile } = await tokenQuery.maybeSingle()
+  const fcmToken = profile?.fcm_token
+
+  if (fcmToken) {
+    console.log(`[daily-reminder] Sending FCM push to ${user_id || guest_session_id} (Profile: ${profile_id || 'none'})`)
+    await triggerFCMPush(fcmToken, title, message, {
+      profile_id: profile_id || '',
+      category: task,
+      type: type,
+      date: today
+    })
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // MAIN HANDLER
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,68 +244,42 @@ Deno.serve(async (req) => {
 
     // ── Step 1: Midnight seeding ──────────────────────────────────────────────
     if (isStartOfDay()) {
-      console.log('[daily-reminder v2] Seeding daily_tracking rows...')
+      console.log('[daily-reminder v2] Seeding user_daily_tracking rows for all profiles...')
       const { error: seedErr } = await supabase.rpc('populate_daily_tracking')
       if (seedErr) console.error('[daily-reminder v2] Seed error:', seedErr.message)
       else         console.log('[daily-reminder v2] Seed complete.')
     }
 
-    // ── Step 2: Fetch all users (authed + active guests) ──────────────────────
-    const { data: users, error: usersErr } = await supabase
-      .from('patient_details')
-      .select('user_id, guest_session_id')
+    // ── Step 2: Fetch all active tracking rows for today ──────────────────────
+    const { data: activeTracking, error: trackingErr } = await supabase
+      .from('user_daily_tracking')
+      .select('*')
+      .eq('date', today)
 
-    if (usersErr) throw usersErr
+    if (trackingErr) throw trackingErr
 
-    console.log(`[daily-reminder v2] Processing ${users?.length ?? 0} identities`)
+    console.log(`[daily-reminder v2] Processing ${activeTracking?.length ?? 0} tracking rows`)
 
     const results: Array<Record<string, unknown>> = []
 
-    for (const { user_id, guest_session_id } of users ?? []) {
+    for (const row of activeTracking ?? []) {
       try {
-        // ── Fetch today's tracking row ────────────────────────────────────────
-        let query = supabase
-          .from('daily_tracking')
-          .select(`
-            diet_completed,     exercise_completed,     sleep_completed,     water_completed,     mental_completed,
-            diet_reminders_sent, exercise_reminders_sent, sleep_reminders_sent, water_reminders_sent, mental_reminders_sent,
-            diet_success_sent,   exercise_success_sent,   sleep_success_sent,   water_success_sent,   mental_success_sent,
-            diet_reminder_limit, exercise_reminder_limit, sleep_reminder_limit, water_reminder_limit, mental_reminder_limit,
-            last_diet_reminder_at, last_exercise_reminder_at, last_sleep_reminder_at, last_water_reminder_at, last_mental_reminder_at
-          `)
-          .eq('date', today)
-
-        if (user_id) {
-          query = query.eq('user_id', user_id)
-        } else {
-          query = query.eq('guest_session_id', guest_session_id).is('user_id', null)
-        }
-
-        const { data: row } = await query.maybeSingle()
+        const { user_id, guest_session_id, profile_id } = row
 
         // ── Fetch user reminder settings ──────────────────────────────────────
         let settingsQuery = supabase
           .from('user_reminder_settings')
           .select('section, is_enabled')
         
-        if (user_id) {
+        if (profile_id) {
+          settingsQuery = settingsQuery.eq('profile_id', profile_id)
+        } else if (user_id) {
           settingsQuery = settingsQuery.eq('user_id', user_id)
         } else {
           settingsQuery = settingsQuery.eq('guest_session_id', guest_session_id).is('user_id', null)
         }
 
         const { data: settings } = await settingsQuery
-
-        if (!row) {
-          // No tracking row yet — seed on demand
-          console.log(`[daily-reminder v2] No tracking row for user=${user_id || guest_session_id}. Seeding.`)
-          await supabase.from('daily_tracking').upsert(
-            { user_id, guest_session_id, date: today },
-            { onConflict: 'user_id,guest_session_id,date' }
-          )
-          results.push({ user_id, guest_session_id, status: 'seeded_on_demand' })
-          continue
-        }
 
         const userResults: Record<string, string> = {}
 
@@ -199,26 +296,17 @@ Deno.serve(async (req) => {
           // ── A: Task just completed — send ONE success notification ──────────
           if (completed && !successSent) {
             const { data: marked } = await supabase.rpc('mark_task_success_sent', {
-              p_user_id:           user_id,
-              p_guest_session_id:  guest_session_id,
+              p_profile_id:        profile_id,
               p_date:              today,
               p_task:              task,
+              p_user_id:           user_id,
+              p_guest_id:          guest_session_id
             })
 
             if (marked === true) {
-              await supabase.from('notifications').insert({
-                user_id,
-                guest_session_id,
-                date:             today,
-                category:         task,
-                type:             'success',
-                slot:             'completion',
-                title:            `${task.charAt(0).toUpperCase() + task.slice(1)} Completed! 🎉`,
-                message:          SUCCESS_MESSAGES[task],
-                is_read:          false,
-                is_ai_generated:  false,
-                metadata:         { task, event: 'success', sent_by: 'edge_function' },
-              })
+              const title = `${task.charAt(0).toUpperCase() + task.slice(1)} Completed! 🎉`
+              const message = SUCCESS_MESSAGES[task]
+              await sendNotification(supabase, user_id, guest_session_id, title, message, task, 'success', today, 'completion', { task, event: 'success', sent_by: 'edge_function' }, profile_id)
               userResults[task] = 'success_sent'
             }
             continue
@@ -259,10 +347,11 @@ Deno.serve(async (req) => {
 
             // Atomically increment counter
             const { data: newCount } = await supabase.rpc('increment_task_reminder', {
-              p_user_id:           user_id,
-              p_guest_session_id:  guest_session_id,
+              p_profile_id:        profile_id,
               p_date:              today,
               p_task:              task,
+              p_user_id:           user_id,
+              p_guest_id:          guest_session_id
             })
 
             if (!newCount || newCount === -1) {
@@ -272,19 +361,8 @@ Deno.serve(async (req) => {
 
             // Send reminder notification
             const message = randomFrom(REMINDER_MESSAGES[task])
-            await supabase.from('notifications').insert({
-              user_id,
-              guest_session_id,
-              date:             today,
-              category:         task,
-              type:             'reminder',
-              slot:             `catch_all_${newCount}`,
-              title:            `${task.charAt(0).toUpperCase() + task.slice(1)} Reminder 🔔`,
-              message,
-              is_read:          false,
-              is_ai_generated:  false,
-              metadata:         { task, event: 'reminder', count: newCount, limit: reminderLimit },
-            })
+            const title = `${task.charAt(0).toUpperCase() + task.slice(1)} Reminder 🔔`
+            await sendNotification(supabase, user_id, guest_session_id, title, message, task, 'reminder', today, `catch_all_${newCount}`, { task, event: 'reminder', count: newCount, limit: reminderLimit }, profile_id)
 
             userResults[task] = `reminder_sent(${newCount}/${reminderLimit})`
           }
@@ -293,13 +371,13 @@ Deno.serve(async (req) => {
         results.push({ user_id: user_id || guest_session_id, tasks: userResults })
 
       } catch (userErr) {
-        console.error(`[daily-reminder v2] Error processing user=${user_id}:`, (userErr as Error).message)
-        results.push({ user_id, status: 'error', error: (userErr as Error).message })
+        console.error(`[daily-reminder v2] Error processing row=${row.id}:`, (userErr as Error).message)
+        results.push({ row_id: row.id, status: 'error', error: (userErr as Error).message })
       }
-    } // end per-user loop
+    } // end per-row loop
 
     return new Response(
-      JSON.stringify({ success: true, date: today, ist_hour: istHour, processed_users: users?.length ?? 0, results }),
+      JSON.stringify({ success: true, date: today, ist_hour: istHour, processed_rows: activeTracking?.length ?? 0, results }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
     )
 

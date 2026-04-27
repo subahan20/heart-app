@@ -2,13 +2,15 @@ import { supabase } from './supabase'
 
 export class StreakService {
   // Get current streak count
-  async getCurrentStreak(userId, guestSessionId) {
+  async getCurrentStreak(userId, guestSessionId, profileId) {
     try {
       let query = supabase
-        .from('patient_details')
+        .from('profiles')
         .select('streak_count')
 
-      if (userId) {
+      if (profileId) {
+        query = query.eq('id', profileId)
+      } else if (userId) {
         query = query.eq('user_id', userId)
       } else if (guestSessionId) {
         query = query.eq('guest_session_id', guestSessionId)
@@ -29,7 +31,7 @@ export class StreakService {
   }
 
   // Update streak count
-  async updateStreak(userId, guestSessionId, newStreakCount, lastStreakDate = null) {
+  async updateStreak(userId, guestSessionId, newStreakCount, lastStreakDate = null, profileId) {
     try {
       const updateData = {
         streak_count: newStreakCount,
@@ -41,13 +43,16 @@ export class StreakService {
       }
 
       let query = supabase
-        .from('patient_details')
+        .from('profiles')
         .update(updateData)
-        .eq(userId ? 'user_id' : 'guest_session_id', userId || guestSessionId)
-        .select()
-        .maybeSingle()
+      
+      if (profileId) {
+        query = query.eq('id', profileId)
+      } else {
+        query = query.eq(userId ? 'user_id' : 'guest_session_id', userId || guestSessionId)
+      }
 
-      const { data, error } = await query
+      const { data, error } = await query.select().maybeSingle()
 
       if (error) {
         console.error('Error updating streak:', error)
@@ -63,7 +68,7 @@ export class StreakService {
   }
 
   // Check and update daily streak
-  async checkAndUpdateDailyStreak(userId, guestSessionId, dailyMetrics) {
+  async checkAndUpdateDailyStreak(userId, guestSessionId, dailyMetrics, profileId) {
     try {
       const today = new Date().toISOString().split('T')[0]
       
@@ -79,41 +84,44 @@ export class StreakService {
       
       if (allCompleted) {
         // Check if streak already updated today
-        const { data: existingStreak } = await supabase
+        let query = supabase
           .from('daily_streaks')
           .select('*')
-          .eq(userId ? 'user_id' : 'guest_session_id', userId || guestSessionId)
           .eq('date', today)
-          .maybeSingle()
+
+        if (profileId) {
+          query = query.eq('profile_id', profileId)
+        } else {
+          query = query.eq(userId ? 'user_id' : 'guest_session_id', userId || guestSessionId)
+        }
+
+        const { data: existingStreak } = await query.maybeSingle()
 
         if (!existingStreak) {
-          // DATABASE TRIGGER 033 handles the streak increment automatically
-          // when all categories are completed. We don't need to manually update it here.
+          // DATABASE TRIGGER handles the streak increment automatically
           console.log('🎉 All activities completed for today! Streak will be updated by server.')
-          
-          /* 
-          // Legacy manual update removed to prevent constraint errors and redundancy
-          const currentStreak = await this.getCurrentStreak(userId, guestSessionId)
-          const newStreakCount = currentStreak + 1
-          await this.updateStreak(userId, guestSessionId, newStreakCount, today)
-          */
-          
           return { isNewRecord: true }
         }
       } else {
         // Check if streak should be reset (no activities completed by end of day)
         const currentHour = new Date().getHours()
         if (currentHour >= 23) { // Check at 11 PM
-          const { data: todayStreak } = await supabase
+          let query = supabase
             .from('daily_streaks')
             .select('*')
-            .eq(userId ? 'user_id' : 'guest_session_id', userId || guestSessionId)
             .eq('date', today)
-            .maybeSingle()
+
+          if (profileId) {
+            query = query.eq('profile_id', profileId)
+          } else {
+            query = query.eq(userId ? 'user_id' : 'guest_session_id', userId || guestSessionId)
+          }
+
+          const { data: todayStreak } = await query.maybeSingle()
           
           if (!todayStreak) {
             // Reset streak to 0
-            await this.updateStreak(userId, guestSessionId, 0, null)
+            await this.updateStreak(userId, guestSessionId, 0, null, profileId)
             console.log('💔 Streak reset to 0')
             return { streakCount: 0, isReset: true }
           }
@@ -121,7 +129,7 @@ export class StreakService {
       }
       
       // Get current streak count
-      const currentStreak = await this.getCurrentStreak(userId, guestSessionId)
+      const currentStreak = await this.getCurrentStreak(userId, guestSessionId, profileId)
       return { streakCount: currentStreak, isNewRecord: false, isReset: false }
     } catch (error) {
       console.error('Failed to check and update daily streak:', error)
@@ -130,7 +138,7 @@ export class StreakService {
   }
 
   // Get streak history
-  async getStreakHistory(userId, guestSessionId, days = 30) {
+  async getStreakHistory(userId, guestSessionId, days = 30, profileId) {
     try {
       const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
       
@@ -140,7 +148,9 @@ export class StreakService {
         .gte('date', startDate)
         .order('date', { ascending: false })
 
-      if (userId) {
+      if (profileId) {
+        query = query.eq('profile_id', profileId)
+      } else if (userId) {
         query = query.eq('user_id', userId)
       } else if (guestSessionId) {
         query = query.eq('guest_session_id', guestSessionId)
@@ -161,7 +171,7 @@ export class StreakService {
   }
 
   // Get longest streak
-  async getLongestStreak(userId, guestSessionId) {
+  async getLongestStreak(userId, guestSessionId, profileId) {
     try {
       let query = supabase
         .from('daily_streaks')
@@ -169,7 +179,9 @@ export class StreakService {
         .order('streak_count', { ascending: false })
         .limit(1)
 
-      if (userId) {
+      if (profileId) {
+        query = query.eq('profile_id', profileId)
+      } else if (userId) {
         query = query.eq('user_id', userId)
       } else if (guestSessionId) {
         query = query.eq('guest_session_id', guestSessionId)
@@ -190,9 +202,9 @@ export class StreakService {
   }
 
   // Subscribe to real-time streak updates
-  subscribeToStreakUpdates(userId, guestSessionId, callback) {
+  subscribeToStreakUpdates(userId, guestSessionId, callback, profileId) {
     try {
-      const subscriptionKey = userId || guestSessionId || 'anonymous'
+      const subscriptionKey = profileId || userId || guestSessionId || 'anonymous'
       
       const subscription = supabase
         .channel(`streak_updates_${subscriptionKey}`)
@@ -200,8 +212,10 @@ export class StreakService {
           {
             event: 'UPDATE',
             schema: 'public',
-            table: 'patient_details',
-            filter: userId 
+            table: 'profiles',
+            filter: profileId 
+              ? `id=eq.${profileId}`
+              : userId 
               ? `user_id=eq.${userId}`
               : guestSessionId
               ? `guest_session_id=eq.${guestSessionId}`

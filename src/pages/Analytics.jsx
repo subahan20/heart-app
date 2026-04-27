@@ -69,7 +69,7 @@ export default function Analytics() {
         totalExercise: weekExercise.reduce((sum, d) => sum + (d.total_minutes || 0), 0),
         avgSleep: weekSleep.length > 0 ? (weekSleep.reduce((sum, d) => sum + (d.duration_hours || 0), 0) / weekSleep.length) : 0,
         totalWater: weekWater.reduce((sum, d) => sum + (d.glasses || 0), 0),
-        avgStress: weekStress.length > 0 ? (weekStress.reduce((sum, d) => sum + (d.mental_stress || 0), 0) / weekStress.length) : 0,
+        avgStress: weekStress.length > 0 ? (weekStress.reduce((sum, d) => sum + (d.stress_level || 0), 0) / weekStress.length) : 0,
         daysWithData: weekDates.filter(date => 
           history.diet.some(d => d.date === date) ||
           history.exercise.some(d => d.date === date) ||

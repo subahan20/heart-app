@@ -67,7 +67,7 @@ export default function DietTab({
               {[
                 { name: 'Breakfast', icon: Sunrise, bg: 'from-orange-50 to-amber-50', border: 'border-orange-100', text: 'text-orange-700', iconColor: 'text-orange-500', items: dailyMetrics.dietData.meals.breakfast },
                 { name: 'Lunch', icon: Sun, bg: 'from-amber-50 to-yellow-50', border: 'border-yellow-100', text: 'text-amber-700', iconColor: 'text-yellow-500', items: dailyMetrics.dietData.meals.lunch },
-                { name: 'Dinner', icon: Moon, bg: 'from-indigo-50 to-blue-50', border: 'border-indigo-100', text: 'text-indigo-700', iconColor: 'text-indigo-500', items: dailyMetrics.dietData.meals.dinner },
+                { name: 'Dinner', icon: Moon, bg: 'from-teal-50 to-emerald-50', border: 'border-teal-100', text: 'text-teal-700', iconColor: 'text-teal-500', items: dailyMetrics.dietData.meals.dinner },
                 { name: 'Snacks', icon: Coffee, bg: 'from-pink-50 to-rose-50', border: 'border-pink-100', text: 'text-pink-700', iconColor: 'text-pink-500', items: dailyMetrics.dietData.meals.snacks }
               ].map(meal => {
                 const totalCalories = meal.items ? meal.items.reduce((sum, item) => sum + (Number(item.calories) || 0), 0) : 0;

@@ -6,20 +6,40 @@
 // ============================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { SignJWT, importPKCS8 } from 'https://esm.sh/jose@5.2.0'
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL')!,
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 )
 
+// FCM Configuration (Set these in Supabase Secrets)
+// FCM_PROJECT_ID: your-project-id
+// FCM_SERVICE_ACCOUNT: { "type": "service_account", ... }
+const FCM_PROJECT_ID = Deno.env.get('FCM_PROJECT_ID')
+const FCM_SERVICE_ACCOUNT = Deno.env.get('FCM_SERVICE_ACCOUNT')
+
 // ── Time utilities ────────────────────────────────────────────────────────────
 function nowInTz(tz: string): { hour: number; minute: number; dayOfWeek: string } {
-  const now    = new Date()
-  const locale = now.toLocaleString('en-US', { timeZone: tz, weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false })
-  // locale: "Mon, 20:30"
-  const [dayPart, timePart] = locale.split(', ')
-  const [h, m]              = timePart.split(':').map(Number)
-  return { hour: h, minute: m, dayOfWeek: dayPart.toLowerCase().slice(0, 3) }
+  const now = new Date();
+  const options: Intl.DateTimeFormatOptions = {
+    timeZone: tz,
+    hour: 'numeric',
+    minute: 'numeric',
+    weekday: 'short',
+    hour12: false,
+  };
+  
+  const formatter = new Intl.DateTimeFormat('en-US', options);
+  const parts = formatter.formatToParts(now);
+  
+  const getPart = (type: string) => parts.find(p => p.type === type)?.value;
+  
+  return { 
+    hour: Number(getPart('hour')), 
+    minute: Number(getPart('minute')), 
+    dayOfWeek: (getPart('weekday') || '').toLowerCase().slice(0, 3)
+  };
 }
 
 function todayStr(tz: string): string {
@@ -50,11 +70,12 @@ const COMPLETE_FIELD: Record<string, string> = {
 
 // ── Reminder messages ─────────────────────────────────────────────────────────
 const MESSAGES: Record<string, string[]> = {
-  diet:     ["🥗 Time to log your meals!", "Don't forget your diet goals today 🍎", "Log your food intake 🍽️"],
-  exercise: ["💪 Ready for your workout?", "Exercise time! Stay active 🏃", "Don't skip your workout today 🏋️"],
-  water:    ["💧 Time to drink water!", "Stay hydrated! Have a glass of water 🥤", "Water reminder — sip up! 💧"],
-  mental:   ["🧘 Take 5 minutes for breathing exercise", "Mental wellness check-in time 🌿", "Don't forget your stress management 🧠"],
-  sleep:    ["😴 Time to wind down for sleep", "Good sleep = good health 🌙", "Prepare for a restful night 💤"],
+  diet:     ["🥗 Diet is not completed yet. Please complete it.", "🍎 Don't forget to log your meals for today."],
+  breakfast:["🥣 Breakfast is not completed yet. Please complete it."],
+  exercise: ["💪 Exercise is not completed yet. Please complete it.", "🏃 Stay active! Don't forget your daily workout."],
+  water:    ["💧 Water intake is not completed yet. Please complete it.", "🥤 Keep hydrated! Have a glass of water."],
+  mental:   ["🧘 Stress management is not completed yet. Please complete it.", "🌿 Take a moment for your mental wellness."],
+  sleep:    ["😴 Sleep log is not completed yet. Please complete it.", "🌙 Rest well! Don't forget to track your sleep."],
 }
 
 function pickMessage(section: string): string {
@@ -63,10 +84,11 @@ function pickMessage(section: string): string {
 }
 
 // ── Send notification ─────────────────────────────────────────────────────────
-async function sendNotification(userId: string | null, guestSessionId: string | null, section: string, message: string, date: string, slot: string = 'default') {
+async function sendNotification(userId: string | null, guestSessionId: string | null, section: string, message: string, date: string, slot: string = 'default', profileId: string | null = null) {
   const { error } = await supabase.from('notifications').upsert({
     user_id:  userId,
     guest_session_id: guestSessionId,
+    profile_id: profileId,
     type:     'reminder',
     category: section,
     date,
@@ -75,9 +97,112 @@ async function sendNotification(userId: string | null, guestSessionId: string | 
     message,
     metadata: { section, goal: section, sent_at: new Date().toISOString() },
     is_read:  false,
-  }, { onConflict: 'user_id,guest_session_id,date,category,type,slot', ignoreDuplicates: false })
+  }, { onConflict: 'profile_id,date,category,type,slot', ignoreDuplicates: false })
 
-  if (error) console.error(`[scheduler] notify error (${section}) slot(${slot}):`, error.message)
+  if (error) {
+    console.error(`[scheduler] notify error (${section}) slot(${slot}):`, error.message)
+    return
+  }
+
+  // Fetch FCM token
+  let tokenQuery = supabase.from('profiles').select('fcm_token')
+  if (profileId) {
+    tokenQuery = tokenQuery.eq('id', profileId)
+  } else if (userId) {
+    tokenQuery = tokenQuery.eq('user_id', userId)
+  } else {
+    tokenQuery = tokenQuery.eq('guest_session_id', guestSessionId).is('user_id', null)
+  }
+
+  const { data: profile } = await tokenQuery.maybeSingle()
+  const fcmToken = profile?.fcm_token
+
+  if (fcmToken) {
+    console.log(`[scheduler] Sending FCM push to user: ${userId || guestSessionId} (Profile: ${profileId || 'none'})`)
+    await triggerFCMPush(fcmToken, `${section.charAt(0).toUpperCase() + section.slice(1)} Reminder 🔔`, message, {
+      profile_id: profileId || '',
+      category: section,
+      type: 'reminder',
+      date
+    })
+  }
+}
+
+// ── FCM Push Trigger (HTTP v1) ────────────────────────────────────────────────
+async function triggerFCMPush(token: string, title: string, body: string, data: Record<string, string> = {}) {
+  if (!FCM_PROJECT_ID || !FCM_SERVICE_ACCOUNT) {
+    console.error("[fcm] Missing FCM_PROJECT_ID or FCM_SERVICE_ACCOUNT secrets")
+    return
+  }
+
+  try {
+    const accessToken = await getGoogleAccessToken(FCM_SERVICE_ACCOUNT);
+    const messagePayload: any = {
+      message: {
+        token,
+        notification: { title, body },
+        data: {
+          ...data,
+          title,
+          body,
+          sent_at: new Date().toISOString()
+        }
+      }
+    };
+    
+    console.log(`[fcm] Sending push to ${token.slice(0, 10)}... (Patient: ${data.patient_id || 'none'})`)
+    
+    const res = await fetch(`https://fcm.googleapis.com/v1/projects/${FCM_PROJECT_ID}/messages:send`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(messagePayload)
+    });
+
+    const resData = await res.json();
+    if (!res.ok) {
+      console.error("[fcm] Send error:", resData)
+    } else {
+      console.log("[fcm] Send success:", resData.name)
+    }
+  } catch (err) {
+    console.error("[fcm] Fatal:", err)
+  }
+}
+
+// ── Google OAuth2 Token Exchange ──────────────────────────────────────────────
+async function getGoogleAccessToken(serviceAccountJson: string): Promise<string> {
+  const sa = JSON.parse(serviceAccountJson)
+  const privateKey = sa.private_key
+  const clientEmail = sa.client_email
+  
+  const now = Math.floor(Date.now() / 1000)
+  
+  const jwt = await new SignJWT({
+    iss: clientEmail,
+    sub: clientEmail,
+    aud: "https://oauth2.googleapis.com/token",
+    iat: now,
+    exp: now + 3600,
+    scope: "https://www.googleapis.com/auth/cloud-platform"
+  })
+    .setProtectedHeader({ alg: 'RS256' })
+    .sign(await importPKCS8(privateKey, 'RS256'))
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion: jwt
+    })
+  })
+
+  const data = await res.json()
+  if (!res.ok) throw new Error(`OAuth error: ${JSON.stringify(data)}`)
+  return data.access_token
 }
 
 // ── Main handler ──────────────────────────────────────────────────────────────
@@ -96,95 +221,109 @@ Deno.serve(async (_req) => {
     const processedIndices = new Set<string>()
 
     for (const setting of settings) {
-      const userId         = setting.user_id
-      const guestSessionId = setting.guest_session_id
-      const tz             = setting.timezone ?? 'Asia/Kolkata'
-      const date           = todayStr(tz)
-      const { hour, minute } = nowInTz(tz)
-      const nowMins        = hour * 60 + minute
+      try {
+        const userId         = setting.user_id
+        const guestSessionId = setting.guest_session_id
+        const tz             = setting.timezone ?? 'Asia/Kolkata'
+        const date           = todayStr(tz)
+        const { hour, minute } = nowInTz(tz)
+        const nowMins        = hour * 60 + minute
 
-      // Skip if not today's repeat
-      if (!shouldRunToday(setting, tz)) continue
-
-      // 2. Fetch daily_tracking for today
-      let query = supabase
-        .from('daily_tracking')
-        .select(`
-          diet_completed, exercise_completed, water_completed, mental_completed, sleep_completed,
-          diet_reminders_sent, exercise_reminders_sent, water_reminders_sent, mental_reminders_sent, sleep_reminders_sent,
-          last_diet_reminder_at, last_exercise_reminder_at, last_water_reminder_at, last_mental_reminder_at, last_sleep_reminder_at
-        `)
-        .eq('date', date)
-      
-      if (userId) query = query.eq('user_id', userId)
-      else query = query.eq('guest_session_id', guestSessionId).is('user_id', null)
-
-      const { data: tracking } = await query.maybeSingle()
-
-      const section     = setting.section as string
-      const isCompleted = tracking?.[COMPLETE_FIELD[section]] ?? false
-
-      // Skip if already done
-      if (isCompleted) continue
-
-      // ── ANTI-SPAM: Min 2 hours since last reminder for this task ──
-      const lastTimeStr = tracking?.[`last_${section}_reminder_at` as keyof typeof tracking] as string | undefined
-      if (lastTimeStr) {
-        const lastTime = new Date(lastTimeStr).getTime()
-        if (Date.now() - lastTime < 2 * 60 * 60 * 1000) {
-          continue // Too soon, wait for next scheduled run
+        // Skip if not today's repeat
+        if (!shouldRunToday(setting, tz)) {
+          console.log(`[scheduler] Skipping ${setting.section} for user ${userId || guestSessionId}: Not scheduled for today.`)
+          continue
         }
-      }
 
-      const startMins = setting.start_time ? timeToMinutes(setting.start_time) : 0
-      const endMins   = setting.end_time   ? timeToMinutes(setting.end_time)   : 23 * 60 + 59
+        // 2. Fetch user_daily_tracking for today
+        let query = supabase
+          .from('user_daily_tracking')
+          .select(`
+            diet_completed, exercise_completed, water_completed, mental_completed, sleep_completed,
+            diet_reminders_sent, exercise_reminders_sent, water_reminders_sent, mental_reminders_sent, sleep_reminders_sent,
+            last_diet_reminder_at, last_exercise_reminder_at, last_water_reminder_at, last_mental_reminder_at, last_sleep_reminder_at
+          `)
+          .eq('date', date)
+        
+        if (setting.profile_id) query = query.eq('profile_id', setting.profile_id)
+        else if (userId) query = query.eq('user_id', userId)
+        else query = query.eq('guest_session_id', guestSessionId).is('user_id', null)
 
-      // Helper to fire nudge with increment
-      const fireNudge = async (originalSlot: string) => {
-        // Atomic increment + update last_reminder_at
-        const { data: newCount } = await supabase.rpc('increment_task_reminder', {
-          p_user_id: userId,
-          p_guest_session_id: guestSessionId,
-          p_date: date,
-          p_task: section
-        })
+        const { data: tracking } = await query.maybeSingle()
 
-        if (newCount && newCount !== -1) {
-          const slot = newCount === 1 ? originalSlot : `${originalSlot}_nudge_${newCount}`
-          await sendNotification(userId, guestSessionId, section, pickMessage(section), date, slot)
+        const section     = setting.section as string
+        const isCompleted = tracking?.[COMPLETE_FIELD[section]] ?? false
+
+        // Skip if already done
+        if (isCompleted) {
+          console.log(`[scheduler] Skipping ${section} for user ${userId || guestSessionId}: Task already completed.`)
+          continue
         }
-      }
 
-      // ── Water: interval-based ────────────────────────────────────────
-      if (section === 'water' && setting.frequency_minutes) {
-        if (nowMins >= startMins && nowMins <= endMins) {
-          const elapsed   = nowMins - startMins
-          const intervalIndex = Math.floor(elapsed / setting.frequency_minutes)
-          
-          if (intervalIndex >= 0) {
-            const tMins = startMins + (intervalIndex * setting.frequency_minutes)
-            if (nowMins >= tMins) {
-              await fireNudge(`interval_${intervalIndex}`)
+        // ── ANTI-SPAM: Min 2 hours since last reminder for this task ──
+        const lastTimeStr = tracking?.[`last_${section}_reminder_at` as keyof typeof tracking] as string | undefined
+        if (lastTimeStr) {
+          const lastTime = new Date(lastTimeStr).getTime()
+          if (Date.now() - lastTime < 2 * 60 * 60 * 1000) {
+            console.log(`[scheduler] Skipping ${section} for user ${userId || guestSessionId}: Anti-spam window (sent < 2h ago).`)
+            continue // Too soon, wait for next scheduled run
+          }
+        }
+
+        const startMins = setting.start_time ? timeToMinutes(setting.start_time) : 0
+        const endMins   = setting.end_time   ? timeToMinutes(setting.end_time)   : 23 * 60 + 59
+
+        // Helper to fire nudge with increment
+        const fireNudge = async (originalSlot: string) => {
+          // Atomic increment + update last_reminder_at
+          const { data: newCount } = await supabase.rpc('increment_task_reminder', {
+            p_profile_id: setting.profile_id,
+            p_date: date,
+            p_task: section,
+            p_user_id: userId,
+            p_guest_id: guestSessionId
+          })
+
+          if (newCount && newCount !== -1) {
+            const slot = newCount === 1 ? originalSlot : `${originalSlot}_nudge_${newCount}`
+            await sendNotification(userId, guestSessionId, section, pickMessage(section), date, slot, setting.profile_id)
+          }
+        }
+
+        // ── Water: interval-based ────────────────────────────────────────
+        if (section === 'water' && setting.frequency_minutes) {
+          if (nowMins >= startMins && nowMins <= endMins) {
+            const elapsed   = nowMins - startMins
+            const intervalIndex = Math.floor(elapsed / setting.frequency_minutes)
+            
+            if (intervalIndex >= 0) {
+              const tMins = startMins + (intervalIndex * setting.frequency_minutes)
+              if (nowMins >= tMins) {
+                await fireNudge(`interval_${intervalIndex}`)
+              }
             }
           }
+          continue
         }
-        continue
-      }
 
-      // ── Diet: specific meal times ────────────────────────────────────
-      if (section === 'diet' && setting.specific_times?.length) {
-        for (const t of setting.specific_times) {
-          const tMins = timeToMinutes(t)
-          if (nowMins >= tMins) {
-            await fireNudge(`meal_${t}`)
+        // ── Diet: specific meal times ────────────────────────────────────
+        if (section === 'diet' && setting.specific_times?.length) {
+          for (const t of setting.specific_times) {
+            if (!t || typeof t !== 'string') continue
+            const tMins = timeToMinutes(t)
+            if (nowMins >= tMins) {
+              await fireNudge(`meal_${t}`)
+            }
           }
+          continue
         }
-        continue
-      }
 
-      // ── Others: fire after start time ──────────────────
-      if (nowMins >= startMins) {
-        await fireNudge('scheduled_start')
+        // ── Others: fire after start time ──────────────────
+        if (nowMins >= startMins) {
+          await fireNudge('scheduled_start')
+        }
+      } catch (innerErr) {
+        console.error(`[reminder-scheduler] Error processing setting ${setting.id}:`, innerErr)
       }
     }
 

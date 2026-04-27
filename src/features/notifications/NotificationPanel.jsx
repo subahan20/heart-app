@@ -5,6 +5,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../services/supabase'
 import { useNotifications } from '../../hooks/useNotifications'
+import { useSectionCompletion } from '../../hooks/useSectionCompletion'
+import { useHealthProfile } from '../../hooks/useHealthProfile'
 
 // ─── Helpers ─────────────────────────────────────────────────
 
@@ -24,6 +26,7 @@ function getCardStyle(type) {
   switch (type) {
     case 'congratulations':
     case 'daily_success':
+    case 'success':
       return {
         border:     '#22c55e',
         bg:         '#f0fdf4',
@@ -53,11 +56,11 @@ function getCardStyle(type) {
       }
     case 'reminder':
       return {
-        border:     '#3b82f6',
-        bg:         '#eff6ff',
-        iconBg:     '#dbeafe',
+        border:     '#10b981',
+        bg:         '#f0fdf4',
+        iconBg:     '#dcfce7',
         icon:       '💡',
-        badge:      '#3b82f6',
+        badge:      '#10b981',
         badgeText:  '#ffffff'
       }
     case 'achievement':
@@ -84,7 +87,22 @@ function getCardStyle(type) {
 // ─── Notification Card ───────────────────────────────────────
 
 function NotificationCard({ notification, onMarkAsRead }) {
-  const style  = getCardStyle(notification.type || notification.notification_type)
+  const msg = notification.message?.toLowerCase() || ''
+  
+  // Logic: 
+  // 1. Critical (red)
+  // 2. Warning (yellow)
+  // 3. Success (green) - default for "completed"
+  let type = 'reminder' // fallback/neutral green
+  if (msg.includes('critical') || msg.includes('urgent') || msg.includes('alert')) {
+    type = 'alert' // Red
+  } else if (msg.includes('not completed') || msg.includes('warning') || msg.includes('pending')) {
+    type = 'warning' // Yellow
+  } else if (msg.includes('completed') || msg.includes('success')) {
+    type = 'success' // Green
+  }
+
+  const style = getCardStyle(type)
   const isRead = notification.is_read
 
   return (
@@ -135,10 +153,7 @@ function NotificationCard({ notification, onMarkAsRead }) {
 
       {/* Content */}
       <div style={{ flex: 1 }}>
-        <p style={{ margin: 0, fontWeight: 600, fontSize: '14px', color: '#111827' }}>
-          {notification.title}
-        </p>
-        <p style={{ margin: '4px 0 6px', fontSize: '13px', color: '#374151', lineHeight: 1.5 }}>
+        <p style={{ margin: 0, fontWeight: 600, fontSize: '14px', color: '#111827', lineHeight: 1.4 }}>
           {notification.message}
         </p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -212,6 +227,30 @@ export function NotificationPanel() {
 
   const { notifications, unreadCount, isLoading, markAsRead, markAllAsRead } =
     useNotifications(userId)
+
+  const { completionState, isFullyComplete, completedCount } = useSectionCompletion()
+  const { activeProfile, allProfiles, switchProfile } = useHealthProfile()
+
+  // --- Dynamic Filter: Hide reminders for completed tasks BUT keep success messages ---
+  const filteredNotifications = notifications.filter((n) => {
+    const taskKey = n.metadata?.task // e.g., 'diet', 'water', 'exercise', 'sleep', 'mental'
+    // Normalize 'stress' to 'mental' if needed
+    const normalizedKey = taskKey === 'stress' ? 'mental' : taskKey
+    
+    // 🛡️ Success-Friendly Logic: We want to see our wins!
+    const isSuccess = 
+      n.type === 'success' || 
+      n.type === 'congratulations' || 
+      n.type === 'daily_success' ||
+      n.metadata?.event === 'success' || 
+      n.message?.toLowerCase().includes('completed')
+    
+    // If the specific task is completed today, hide its REMINDERS, but keep SUCCESS alerts
+    if (normalizedKey && completionState[normalizedKey] === true && !isSuccess) {
+      return false
+    }
+    return true
+  })
 
   // Close panel on outside click
   useEffect(() => {
@@ -347,14 +386,53 @@ export function NotificationPanel() {
 
           {/* List */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '12px 12px 8px' }}>
+
+            {/* --- Completion Status Card --- */}
+            <div 
+              style={{
+                marginBottom: '16px',
+                padding: '16px',
+                borderRadius: '12px',
+                background: isFullyComplete 
+                  ? 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)' 
+                  : 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)',
+                border: `1px solid ${isFullyComplete ? '#86efac' : '#fde68a'}`,
+                textAlign: 'center',
+                boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.05)'
+              }}
+            >
+              <div style={{ fontSize: '24px', marginBottom: '8px' }}>
+                {isFullyComplete ? '🎊' : '⚡'}
+              </div>
+              <h4 style={{ margin: '0 0 4px', fontSize: '15px', fontWeight: 700, color: isFullyComplete ? '#166534' : '#92400e' }}>
+                {isFullyComplete ? 'All Goals Completed!' : 'Keep Going!'}
+              </h4>
+              <p style={{ margin: 0, fontSize: '13px', color: isFullyComplete ? '#15803d' : '#b45309', opacity: 0.9 }}>
+                {isFullyComplete 
+                  ? `Brilliant work, ${activeProfile?.name || 'there'}! You've crushed all your tasks for today.`
+                  : `Hey ${activeProfile?.name || 'there'}, you've completed ${completedCount}/5 tasks. Just a few more to go!`}
+              </p>
+              
+              {!isFullyComplete && (
+                <div style={{ marginTop: '10px', height: '6px', background: '#fef3c7', borderRadius: '3px', overflow: 'hidden', border: '1px solid #fde68a' }}>
+                  <div style={{ 
+                    height: '100%', 
+                    width: `${(completedCount / 5) * 100}%`, 
+                    background: '#f59e0b',
+                    transition: 'width 0.5s ease-out'
+                  }} />
+                </div>
+              )}
+            </div>
+
             {isLoading ? (
               <div style={{ textAlign: 'center', padding: '40px', color: '#9ca3af' }}>
                 Loading…
               </div>
-            ) : notifications.length === 0 ? (
+            ) : filteredNotifications.length === 0 ? (
               <EmptyState />
             ) : (
-              notifications.map((n) => (
+              filteredNotifications.map((n) => (
                 <NotificationCard
                   key={n.id}
                   notification={n}

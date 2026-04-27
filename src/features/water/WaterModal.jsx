@@ -35,8 +35,7 @@ export default function WaterModal({ onClose, selectedDate, dateRange, rangeData
     saveWaterData.mutate({
       date: selectedDate,
       glasses: 0,
-      totalMl: 0,
-      goalMl: maxCapacity
+      target_glasses: Math.round(maxCapacity / 250)
     }, {
       onSuccess: () => {
         setWaterLevel(0)
@@ -51,7 +50,7 @@ export default function WaterModal({ onClose, selectedDate, dateRange, rangeData
       await saveWaterData({
         date: selectedDate,
         glasses: glasses,
-        goalMl: maxCapacity
+        target_glasses: Math.round(maxCapacity / 250)
       })
       onClose()
     } catch (error) {

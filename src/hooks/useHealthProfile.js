@@ -1,123 +1,198 @@
-import { useMemo } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../services/supabase'
 import { aiService } from '../services/aiService'
 
-export const useHealthProfile = () => {
-  const queryClient = useQueryClient()
+/**
+ * useHealthProfile
+ * 
+ * MINIMALIST ARCHITECTURE (NO CONTEXT)
+ * 
+ * - Source of truth: localStorage.getItem("activeProfileId")
+ * - Switching: localStorage.setItem(...) + window.location.reload()
+ */
+export function useHealthProfile() {
+  const [activeProfile, setActiveProfile] = useState(null)
+  const [allProfiles,    setAllProfiles]    = useState([])
+  const [loading,        setLoading]        = useState(true)
+  const [error,          setError]          = useState(null)
 
-  const profileQuery = useQuery({
-    queryKey: ['user_profile', aiService.getChatSessionId()],
-    queryFn: async () => {
+  const activeProfileId = localStorage.getItem('activeProfileId')
+
+  const fetchProfiles = useCallback(async () => {
+    try {
+      setLoading(true)
       const { data: { user } } = await supabase.auth.getUser()
-      const guestSessionId = !user ? aiService.getChatSessionId() : null
-      
-      if (!user && !guestSessionId) return null
+      const guestId = aiService.getChatSessionId()
 
-      let query = supabase
-        .from('patient_details')
-        .select('*')
+      let profilesList = []
 
       if (user) {
-        query = query.eq('user_id', user.id)
-      } else if (guestSessionId) {
-        query = query.eq('guest_session_id', guestSessionId)
-      }
-
-      const { data, error } = await query.maybeSingle()
-
-      if (error && error.code !== 'PGRST116') throw error
-      return data || null
-    }
-  })
-
-  const updateProfileMutation = useMutation({
-    mutationFn: async (profileData) => {
-      const { data: { user } } = await supabase.auth.getUser()
-      const guestSessionId = !user ? aiService.getChatSessionId() : null
-      
-      if (!user && !guestSessionId) {
-        throw new Error('No user session found')
-      }
-
-      // Calculate BMI
-      const height = parseFloat(profileData.height)
-      const weight = parseFloat(profileData.weight)
-      let bmi = null
-      let bmiStatus = null
-      if (height && weight) {
-        const heightInMeters = height / 100
-        bmi = parseFloat((weight / (heightInMeters * heightInMeters)).toFixed(1))
-        
-        // Determine BMI status
-        if (bmi < 18.5) bmiStatus = 'Underweight'
-        else if (bmi < 25) bmiStatus = 'Normal'
-        else if (bmi < 30) bmiStatus = 'Overweight'
-        else bmiStatus = 'Obese'
-      }
-
-      const payload = {
-        full_name: profileData.name,
-        age: parseInt(profileData.age),
-        height: parseFloat(profileData.height),
-        weight: parseFloat(profileData.weight),
-        gender: profileData.gender,
-        activity_level: profileData.activityLevel,
-        diseases: profileData.diseases || [],
-        systolic: profileData.systolic ? parseInt(profileData.systolic) : null,
-        diastolic: profileData.diastolic ? parseInt(profileData.diastolic) : null,
-        pulse: profileData.pulse ? parseInt(profileData.pulse) : null,
-        blood_sugar: profileData.bloodSugar || null
-      }
-
-      if (user) {
-        payload.user_id = user.id
-      } else if (guestSessionId) {
-        payload.guest_session_id = guestSessionId
-      }
-
-      const { data: profileResult, error: profileError } = await supabase
-        .from('patient_details')
-        .upsert(payload, { onConflict: user ? 'user_id' : 'guest_session_id' })
-        .select()
-        .maybeSingle()
-
-      if (profileError) throw profileError
-
-      // Store BMI in health_information table
-      if (bmi && bmiStatus) {
-        let healthInfoQuery = supabase.from('health_information').upsert({
-          bmi: bmi,
-          bmi_status: bmiStatus,
-          bmi_calculated_at: new Date().toISOString()
-        })
-
-        if (user) {
-          healthInfoQuery = healthInfoQuery.eq('user_id', user.id)
-        } else if (guestSessionId) {
-          healthInfoQuery = healthInfoQuery.eq('guest_session_id', guestSessionId)
+        // 1. Adopt any orphaned guest profiles first
+        if (guestId) {
+          await supabase
+            .from('profiles')
+            .update({ user_id: user.id })
+            .eq('guest_session_id', guestId)
+            .is('user_id', null)
         }
 
-        const { error: healthInfoError } = await healthInfoQuery
+        // 2. Fetch all profiles for this user
+        const { data, error: fetchErr } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: true })
+        
+        if (fetchErr) throw fetchErr
+        profilesList = data || []
+      } else if (guestId) {
+        // 3. Fetch for guest
+        const { data, error: guestErr } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('guest_session_id', guestId)
+          .is('user_id', null)
+          .order('created_at', { ascending: true })
 
-        if (healthInfoError) throw healthInfoError
+        if (guestErr) throw guestErr
+        profilesList = data || []
       }
 
-      return profileResult
-    },
-    onSuccess: () => {
-      const sessionId = aiService.getChatSessionId()
-      queryClient.invalidateQueries({ queryKey: ['user_profile', sessionId] })
-      queryClient.invalidateQueries({ queryKey: ['health_information'] })
-    }
-  })
+      setAllProfiles(profilesList)
 
-  return useMemo(() => ({
-    profile: profileQuery.data,
-    loading: profileQuery.isLoading,
-    error: profileQuery.error?.message,
-    fetchProfile: profileQuery.refetch,
-    updateProfile: updateProfileMutation.mutateAsync,
-    isUpdating: updateProfileMutation.isPending
-  }), [profileQuery.data, profileQuery.isLoading, profileQuery.error?.message, profileQuery.refetch, updateProfileMutation.mutateAsync, updateProfileMutation.isPending])
+      // Resolve active profile object from ID
+      if (activeProfileId) {
+        const active = profilesList.find(p => String(p.id) === String(activeProfileId))
+        if (active) {
+          setActiveProfile(active)
+        } else if (profilesList.length > 0) {
+          // Fallback if current active profile is missing (e.g. deleted)
+          setActiveProfile(profilesList[0])
+          localStorage.setItem('activeProfileId', profilesList[0].id)
+        }
+      } else if (profilesList.length > 0) {
+        // Auto-select first profile if none active
+        setActiveProfile(profilesList[0])
+        localStorage.setItem('activeProfileId', profilesList[0].id)
+      }
+    } catch (err) {
+      console.error('[useHealthProfile] Error:', err)
+      setError(err)
+    } finally {
+      setLoading(false)
+    }
+  }, [activeProfileId])
+
+  useEffect(() => {
+    fetchProfiles()
+
+    // Sync across instances (Gate, Home, etc.)
+    const handleSync = () => fetchProfiles()
+    window.addEventListener('profile-updated', handleSync)
+    
+    // Listen for storage changes from other tabs
+    const handleStorage = (e) => {
+      if (e.key === 'activeProfileId') fetchProfiles()
+    }
+    window.addEventListener('storage', handleStorage)
+
+    return () => {
+      window.removeEventListener('profile-updated', handleSync)
+      window.removeEventListener('storage', handleStorage)
+    }
+  }, [fetchProfiles])
+
+  const switchProfile = (id, redirectTo = null) => {
+    if (!id) return
+    localStorage.setItem('activeProfileId', id)
+    
+    // Use hard reload to ensure all TanStack Query caches and states are completely cleared
+    // This is the safest way to guarantee data isolation between profiles.
+    if (redirectTo) {
+      window.location.href = redirectTo
+    } else {
+      window.location.reload()
+    }
+  }
+
+  const createProfile = async (name) => {
+    const { data: { user } } = await supabase.auth.getUser()
+    const guestId = aiService.getChatSessionId()
+
+    const { data, error: insErr } = await supabase
+      .from('profiles')
+      .insert({ 
+        user_id: user?.id || null, 
+        guest_session_id: guestId,
+        name,
+        onboarding_complete: false 
+      })
+      .select()
+      .single()
+
+    if (insErr) throw insErr
+    await fetchProfiles()
+    window.dispatchEvent(new Event('profile-updated'))
+    return data
+  }
+
+  const updateProfile = async (id, updates, isAddMode = false) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      const guestId = aiService.getChatSessionId()
+      
+      let result
+      if (isAddMode) {
+        // Creating a new profile with full details
+        const { data, error: insErr } = await supabase
+          .from('profiles')
+          .insert({
+            ...updates,
+            user_id: user?.id || null,
+            guest_session_id: guestId,
+            onboarding_complete: true
+          })
+          .select()
+          .single()
+        if (insErr) throw insErr
+        result = data
+        // Switch to the newly created profile
+        localStorage.setItem('activeProfileId', data.id)
+      } else {
+        // Updating existing profile
+        const { data, error: updErr } = await supabase
+          .from('profiles')
+          .update({
+            ...updates,
+            onboarding_complete: true,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', id)
+          .select()
+          .single()
+        if (updErr) throw updErr
+        result = data
+      }
+      
+      await fetchProfiles()
+      window.dispatchEvent(new Event('profile-updated'))
+      return result
+    } catch (err) {
+      console.error('[useHealthProfile] Update failed:', err)
+      throw err
+    }
+  }
+
+  return {
+    activeProfile,
+    profile: activeProfile, // Alias for backward compatibility
+    allProfiles,
+    activeProfileId,
+    switchProfile,
+    createProfile,
+    updateProfile,
+    loading,
+    error,
+    refresh: fetchProfiles
+  }
 }

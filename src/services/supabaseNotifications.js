@@ -6,7 +6,7 @@ export class SupabaseNotificationService {
   }
 
   // Create a new notification
-  async createNotification(userId, guestSessionId, category, type, title, message, metadata = {}) {
+  async createNotification(userId, guestSessionId, category, type, title, message, metadata = {}, profileId = null) {
     try {
       const today = new Date().toISOString().split('T')[0]
       const notificationData = {
@@ -16,6 +16,7 @@ export class SupabaseNotificationService {
         message,
         date: today,
         is_read: false,
+        profile_id: profileId || null,
         metadata: {
           ...metadata,
           created_at: new Date().toISOString()
@@ -26,8 +27,8 @@ export class SupabaseNotificationService {
       notificationData.user_id = userId || null
       notificationData.guest_session_id = guestSessionId || null
 
-      // Use the standardized composite conflict target matching idx_notifications_unified_upsert
-      const onConflict = 'user_id,guest_session_id,date,category,type'
+      // Use the standardized composite conflict target
+      const onConflict = 'user_id,guest_session_id,profile_id,date,category,type'
 
       const { data, error } = await supabase
         .from('notifications')
@@ -36,7 +37,7 @@ export class SupabaseNotificationService {
           ignoreDuplicates: true 
         })
         .select()
-        .maybeSingle()  // ignoreDuplicates returns 0 rows — maybeSingle() handles that safely
+        .maybeSingle()
 
       if (error) {
         if (error.code === '23505') {
@@ -47,7 +48,6 @@ export class SupabaseNotificationService {
         throw error
       }
 
-      // data is null when the row already existed and was skipped (ignoreDuplicates)
       if (!data) {
         return { success: true, duplicated: true }
       }
@@ -59,27 +59,27 @@ export class SupabaseNotificationService {
     }
   }
 
-  // Get notifications for a user
-  async getNotifications(userId, guestSessionId, limit = 50, unreadOnly = false) {
+  // Get notifications for a profile
+  async getNotifications(userId, guestSessionId, limit = 50, unreadOnly = false, profileId = null) {
     try {
       let query = supabase
         .from('notifications')
         .select('*')
         .order('created_at', { ascending: false })
 
-      // Filter by user or guest
-      if (userId) {
+      // Isolate by user/guest AND profile_id if available
+      if (profileId) {
+        query = query.eq('profile_id', profileId)
+      } else if (userId) {
         query = query.eq('user_id', userId)
       } else if (guestSessionId) {
         query = query.eq('guest_session_id', guestSessionId)
       }
 
-      // Filter by read status if requested
       if (unreadOnly) {
         query = query.eq('is_read', false)
       }
 
-      // Apply limit
       if (limit) {
         query = query.limit(limit)
       }
@@ -113,12 +113,6 @@ export class SupabaseNotificationService {
         throw error
       }
 
-      if (!data) {
-        console.warn('Notification not found or already read:', notificationId)
-        return null
-      }
-
-      console.log('✅ Notification marked as read:', data)
       return data
     } catch (error) {
       console.error('Failed to mark notification as read:', error)
@@ -126,15 +120,17 @@ export class SupabaseNotificationService {
     }
   }
 
-  // Mark all notifications as read for a user
-  async markAllAsRead(userId, guestSessionId) {
+  // Mark all notifications as read for a profile
+  async markAllAsRead(userId, guestSessionId, profileId = null) {
     try {
       let query = supabase
         .from('notifications')
         .update({ is_read: true })
         .eq('is_read', false)
 
-      if (userId) {
+      if (profileId) {
+        query = query.eq('profile_id', profileId)
+      } else if (userId) {
         query = query.eq('user_id', userId)
       } else if (guestSessionId) {
         query = query.eq('guest_session_id', guestSessionId)
@@ -147,7 +143,6 @@ export class SupabaseNotificationService {
         throw error
       }
 
-      console.log('✅ All notifications marked as read:', data)
       return data
     } catch (error) {
       console.error('Failed to mark all notifications as read:', error)
@@ -156,14 +151,16 @@ export class SupabaseNotificationService {
   }
 
   // Get unread count
-  async getUnreadCount(userId, guestSessionId) {
+  async getUnreadCount(userId, guestSessionId, profileId = null) {
     try {
       let query = supabase
         .from('notifications')
         .select('*', { count: 'exact', head: true })
         .eq('is_read', false)
 
-      if (userId) {
+      if (profileId) {
+        query = query.eq('profile_id', profileId)
+      } else if (userId) {
         query = query.eq('user_id', userId)
       } else if (guestSessionId) {
         query = query.eq('guest_session_id', guestSessionId)
@@ -183,46 +180,22 @@ export class SupabaseNotificationService {
     }
   }
 
-  // Delete old notifications (cleanup)
-  async deleteOldNotifications(userId, guestSessionId, daysToKeep = 30) {
-    try {
-      const cutoffDate = new Date(Date.now() - daysToKeep * 24 * 60 * 60 * 1000).toISOString()
-
-      let query = supabase
-        .from('notifications')
-        .delete()
-        .lt('created_at', cutoffDate)
-
-      if (userId) {
-        query = query.eq('user_id', userId)
-      } else if (guestSessionId) {
-        query = query.eq('guest_session_id', guestSessionId)
-      }
-
-      const { data, error } = await query
-
-      if (error) {
-        console.error('Error deleting old notifications:', error)
-        throw error
-      }
-
-      console.log(`✅ Deleted old notifications older than ${daysToKeep} days:`, data)
-      return data
-    } catch (error) {
-      console.error('Failed to delete old notifications:', error)
-      throw error
-    }
-  }
-
   // Subscribe to real-time notifications
-  subscribeToNotifications(userId, guestSessionId, callback) {
+  subscribeToNotifications(userId, guestSessionId, profileId, callback) {
     try {
-      const subscriptionKey = userId || guestSessionId || 'anonymous'
+      const subscriptionKey = profileId || userId || guestSessionId || 'anonymous'
       
-      // Unsubscribe from existing subscription
       if (this.subscriptions.has(subscriptionKey)) {
         this.subscriptions.get(subscriptionKey).unsubscribe()
       }
+
+      const filter = profileId 
+        ? `profile_id=eq.${profileId}`
+        : userId
+        ? `user_id=eq.${userId}`
+        : guestSessionId
+        ? `guest_session_id=eq.${guestSessionId}`
+        : undefined
 
       const subscription = supabase
         .channel(`notifications_${subscriptionKey}`)
@@ -231,11 +204,7 @@ export class SupabaseNotificationService {
             event: '*',
             schema: 'public',
             table: 'notifications',
-            filter: userId 
-              ? `user_id=eq.${userId}`
-              : guestSessionId
-              ? `guest_session_id=eq.${guestSessionId}`
-              : undefined
+            filter
           },
           (payload) => {
             console.log('🔔 Real-time notification update:', payload)
@@ -245,8 +214,6 @@ export class SupabaseNotificationService {
         .subscribe()
 
       this.subscriptions.set(subscriptionKey, subscription)
-      console.log(`✅ Subscribed to notifications for: ${subscriptionKey}`)
-      
       return subscription
     } catch (error) {
       console.error('Failed to subscribe to notifications:', error)
@@ -255,109 +222,17 @@ export class SupabaseNotificationService {
   }
 
   // Unsubscribe from notifications
-  unsubscribeFromNotifications(userId, guestSessionId) {
+  unsubscribeFromNotifications(userId, guestSessionId, profileId = null) {
     try {
-      const subscriptionKey = userId || guestSessionId || 'anonymous'
+      const subscriptionKey = profileId || userId || guestSessionId || 'anonymous'
       
       if (this.subscriptions.has(subscriptionKey)) {
         const subscription = this.subscriptions.get(subscriptionKey)
         subscription.unsubscribe()
         this.subscriptions.delete(subscriptionKey)
-        console.log(`✅ Unsubscribed from notifications for: ${subscriptionKey}`)
       }
     } catch (error) {
       console.error('Failed to unsubscribe from notifications:', error)
-    }
-  }
-
-  // Get notifications by category
-  async getNotificationsByCategory(userId, guestSessionId, category, limit = 10) {
-    try {
-      let query = supabase
-        .from('notifications')
-        .select('*')
-        .eq('category', category)
-        .order('created_at', { ascending: false })
-        .limit(limit)
-
-      if (userId) {
-        query = query.eq('user_id', userId)
-      } else if (guestSessionId) {
-        query = query.eq('guest_session_id', guestSessionId)
-      }
-
-      const { data, error } = await query
-
-      if (error) {
-        console.error('Error getting notifications by category:', error)
-        throw error
-      }
-
-      return data || []
-    } catch (error) {
-      console.error('Failed to get notifications by category:', error)
-      return []
-    }
-  }
-
-  // Get notifications by type
-  async getNotificationsByType(userId, guestSessionId, type, limit = 10) {
-    try {
-      let query = supabase
-        .from('notifications')
-        .select('*')
-        .eq('type', type)
-        .order('created_at', { ascending: false })
-        .limit(limit)
-
-      if (userId) {
-        query = query.eq('user_id', userId)
-      } else if (guestSessionId) {
-        query = query.eq('guest_session_id', guestSessionId)
-      }
-
-      const { data, error } = await query
-
-      if (error) {
-        console.error('Error getting notifications by type:', error)
-        throw error
-      }
-
-      return data || []
-    } catch (error) {
-      console.error('Failed to get notifications by type:', error)
-      return []
-    }
-  }
-
-  // Get today's notifications
-  async getTodayNotifications(userId, guestSessionId) {
-    try {
-      const today = new Date().toISOString().split('T')[0]
-      
-      let query = supabase
-        .from('notifications')
-        .select('*')
-        .gte('created_at', today)
-        .order('created_at', { ascending: false })
-
-      if (userId) {
-        query = query.eq('user_id', userId)
-      } else if (guestSessionId) {
-        query = query.eq('guest_session_id', guestSessionId)
-      }
-
-      const { data, error } = await query
-
-      if (error) {
-        console.error('Error getting today\'s notifications:', error)
-        throw error
-      }
-
-      return data || []
-    } catch (error) {
-      console.error('Failed to get today\'s notifications:', error)
-      return []
     }
   }
 
@@ -366,7 +241,6 @@ export class SupabaseNotificationService {
     try {
       for (const [key, subscription] of this.subscriptions) {
         subscription.unsubscribe()
-        console.log(`✅ Cleaned up subscription: ${key}`)
       }
       this.subscriptions.clear()
     } catch (error) {

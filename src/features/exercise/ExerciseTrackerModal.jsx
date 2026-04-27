@@ -173,8 +173,8 @@ export default function ExerciseTrackerModal({ onClose, selectedDate, dateRange,
     saveExerciseData.mutate({
       date: selectedDate,
       exercises: updatedExercises,
-      totalMinutes: totalMinutes,
-      totalCalories: totalCalories
+      total_minutes: totalMinutes,
+      total_calories: totalCalories
     }, {
       onSuccess: () => {
         resetTimer()
@@ -195,8 +195,8 @@ export default function ExerciseTrackerModal({ onClose, selectedDate, dateRange,
     saveExerciseData.mutate({
       date: selectedDate,
       exercises: updatedExercises,
-      totalMinutes: totalMinutes,
-      totalCalories: totalCalories
+      total_minutes: totalMinutes,
+      total_calories: totalCalories
     }, {
       onError: (error) => {
         console.error('Error deleting exercise:', error)

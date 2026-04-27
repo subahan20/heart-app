@@ -3,6 +3,7 @@ import { toast } from 'react-toastify'
 import { Button } from '../../components/common/Button'
 import { Moon, Sun, Clock, Bell } from 'lucide-react'
 import { useDailyTracking } from '../../hooks/useDailyTracking'
+import { useHealthProfile } from '../../hooks/useHealthProfile'
 import { supabaseNotificationService } from '../../services/supabaseNotifications'
 import { supabase } from '../../services/supabase'
 import { aiService } from '../../services/aiService'
@@ -11,6 +12,8 @@ import { persistenceService } from '../../services/persistenceService'
 
 export default function SleepTrackerModal({ onClose, selectedDate, dateRange, rangeData }) {
   const { useDailyData, saveSleepData } = useDailyTracking()
+  const { activeProfile } = useHealthProfile()
+  const patientId = activeProfile?.id
   const dailyDataQuery = useDailyData(selectedDate)
   const today = new Date().toISOString().split('T')[0]
   const isPastDate = selectedDate < today
@@ -47,7 +50,7 @@ export default function SleepTrackerModal({ onClose, selectedDate, dateRange, ra
       if (isPastDate) return
 
       // Recover state from Supabase instead of localStorage
-      const saved = await persistenceService.getState('sleep_schedule', currentUserId, currentGuestId)
+      const saved = await persistenceService.getState('sleep_schedule', currentUserId, currentGuestId, patientId)
       
       if (saved) {
         const { scheduledTime, activeStartTime, duration } = saved
@@ -67,7 +70,7 @@ export default function SleepTrackerModal({ onClose, selectedDate, dateRange, ra
             setSleepRemaining(0)
             setIsSleeping(false)
             setIsSleepCompleted(true)
-            await persistenceService.removeState('sleep_schedule', currentUserId, currentGuestId)
+            await persistenceService.removeState('sleep_schedule', currentUserId, currentGuestId, patientId)
           }
         } else if (scheduledTime) {
           // Check if scheduled time has passed
@@ -82,7 +85,7 @@ export default function SleepTrackerModal({ onClose, selectedDate, dateRange, ra
               scheduledTime: null, 
               activeStartTime: startNow, 
               duration 
-            }, currentUserId, currentGuestId)
+            }, currentUserId, currentGuestId, patientId)
           } else {
             setIsWaitingToSleep(true)
           }
@@ -152,7 +155,7 @@ export default function SleepTrackerModal({ onClose, selectedDate, dateRange, ra
           scheduledTime: null, 
           activeStartTime: startNow, 
           duration: sleepDuration 
-        }, userId, guestSessionId)
+        }, userId, guestSessionId, patientId)
         return
       }
 
@@ -269,7 +272,7 @@ export default function SleepTrackerModal({ onClose, selectedDate, dateRange, ra
         scheduledTime: target.getTime(), 
         activeStartTime: null, 
         duration: sleepDuration 
-      }, userId, guestSessionId)
+      }, userId, guestSessionId, patientId)
       return
     }
 
@@ -285,13 +288,13 @@ export default function SleepTrackerModal({ onClose, selectedDate, dateRange, ra
       scheduledTime: null, 
       activeStartTime: startNow, 
       duration: sleepDuration 
-    }, userId, guestSessionId)
+    }, userId, guestSessionId, patientId)
   }
 
   const handleStopSleep = async () => {
     setIsSleeping(false)
     setIsSleepCompleted(true)
-    await persistenceService.removeState('sleep_schedule', userId, guestSessionId)
+    await persistenceService.removeState('sleep_schedule', userId, guestSessionId, patientId)
   }
 
   const handleCompleteSleep = async () => {
@@ -302,7 +305,7 @@ export default function SleepTrackerModal({ onClose, selectedDate, dateRange, ra
     
     setActualSleepHours(actualHours)
     
-    await persistenceService.removeState('sleep_schedule', userId, guestSessionId)
+    await persistenceService.removeState('sleep_schedule', userId, guestSessionId, patientId)
     
     // Don't save for past dates
     if (isPastDate) {
@@ -314,9 +317,9 @@ export default function SleepTrackerModal({ onClose, selectedDate, dateRange, ra
     try {
       await saveSleepData({
         date: selectedDate,
-        sleepTime,
-        wakeTime,
-        duration: actualHours, // Use actual time, not planned time
+        sleep_time: sleepTime,
+        wake_time: wakeTime,
+        duration_hours: actualHours,
         quality: sleepQuality.level
       })
       setIsSleepCompleted(false)
@@ -340,9 +343,9 @@ export default function SleepTrackerModal({ onClose, selectedDate, dateRange, ra
       const quality = getSleepQuality(sleepDuration)
       await saveSleepData({
         date: selectedDate,
-        sleepTime,
-        wakeTime,
-        duration: sleepDuration,
+        sleep_time: sleepTime,
+        wake_time: wakeTime,
+        duration_hours: sleepDuration,
         quality: quality.level
       })
       toast.success('Sleep logged successfully!')

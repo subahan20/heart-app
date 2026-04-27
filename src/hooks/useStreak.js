@@ -5,12 +5,14 @@ import { aiService } from '../services/aiService'
 /**
  * useStreak
  * 
- * Fetches the current user's streak information from patient_details.
- * Read-only as per production requirements.
+ * Fetches the current profile's streak information.
  */
 export const useStreak = () => {
+  // MINIMALIST SOURCE OF TRUTH: localStorage
+  const profileId = localStorage.getItem('activeProfileId')
+
   return useQuery({
-    queryKey: ['userStreak', aiService.getChatSessionId()],
+    queryKey: ['userStreak', profileId || aiService.getChatSessionId()],
     queryFn: async () => {
       const { data: { user } } = await supabase.auth.getUser()
       const guestSessionId = !user ? aiService.getChatSessionId() : null
@@ -18,18 +20,19 @@ export const useStreak = () => {
       if (!user && !guestSessionId) return null
  
       let query = supabase
-        .from('patient_streak')
+        .from('user_streaks')
         .select(`
           streak_count,
           daily_completed,
-          last_completed_date,
-          patient_details!inner(user_id, guest_session_id)
+          last_completed_date
         `)
 
-      if (user) {
-        query = query.eq('patient_details.user_id', user.id)
+      if (profileId) {
+        query = query.eq('profile_id', profileId)
+      } else if (user) {
+        query = query.eq('user_id', user.id).is('profile_id', null)
       } else {
-        query = query.eq('patient_details.guest_session_id', guestSessionId)
+        query = query.eq('guest_session_id', guestSessionId)
       }
 
       const { data, error } = await query.maybeSingle()

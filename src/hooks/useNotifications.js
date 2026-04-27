@@ -1,7 +1,3 @@
-// src/hooks/useNotifications.js
-// Centralised notification hook: fetches notifications, subscribes
-// to realtime inserts, and exposes mark-as-read helpers.
-
 import { useRef, useEffect, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../services/supabase'
@@ -9,20 +5,24 @@ import { aiService } from '../services/aiService'
 
 // ─── Supabase helpers ────────────────────────────────────────
 
-async function fetchNotifications(userId, guestSessionId, limit = 50) {
+async function fetchNotifications(userId, guestSessionId, profileId, limit = 50) {
   if (!userId && !guestSessionId) return []
+  
   let query = supabase
     .from('notifications')
     .select('*')
     .order('created_at', { ascending: false })
     .limit(limit)
-  
-  if (userId) {
+
+  // Minimalist Filtering: Always use profile_id if available
+  if (profileId) {
+    query = query.eq('profile_id', profileId)
+  } else if (userId) {
     query = query.eq('user_id', userId)
-  } else {
+  } else if (guestSessionId) {
     query = query.eq('guest_session_id', guestSessionId)
   }
-
+  
   const { data, error } = await query
   if (error) throw error
   return data ?? []
@@ -31,7 +31,7 @@ async function fetchNotifications(userId, guestSessionId, limit = 50) {
 async function updateNotificationRead(id) {
   const { data, error } = await supabase
     .from('notifications')
-    .update({ is_read: true, updated_at: new Date().toISOString() })
+    .update({ is_read: true })
     .eq('id', id)
     .select()
     .maybeSingle()
@@ -39,16 +39,18 @@ async function updateNotificationRead(id) {
   return data
 }
 
-async function updateAllNotificationsRead(userId, guestSessionId) {
+async function updateAllNotificationsRead(userId, guestSessionId, profileId) {
   if (!userId && !guestSessionId) return
   let query = supabase
     .from('notifications')
-    .update({ is_read: true, updated_at: new Date().toISOString() })
+    .update({ is_read: true })
     .eq('is_read', false)
 
-  if (userId) {
+  if (profileId) {
+    query = query.eq('profile_id', profileId)
+  } else if (userId) {
     query = query.eq('user_id', userId)
-  } else {
+  } else if (guestSessionId) {
     query = query.eq('guest_session_id', guestSessionId)
   }
 
@@ -58,26 +60,13 @@ async function updateAllNotificationsRead(userId, guestSessionId) {
 
 // ─── Hook ────────────────────────────────────────────────────
 
-/**
- * useNotifications
- *
- * @param {string|null} userId  - Authenticated user ID (null = inactive)
- * @param {number}      limit   - Max notifications to fetch (default 50)
- *
- * @returns {{
- *   notifications: object[],
- *   unreadCount: number,
- *   isLoading: boolean,
- *   isError: boolean,
- *   markAsRead: (id: string) => void,
- *   markAllAsRead: () => void,
- *   refetch: () => void
- * }}
- */
 export function useNotifications(userId, limit = 50) {
   const queryClient = useQueryClient()
   const channelRef  = useRef(null)
   const guestSessionId = !userId ? aiService.getChatSessionId() : null
+  
+  // MINIMALIST: Read directly from localStorage
+  const profileId = localStorage.getItem('activeProfileId')
 
   // ── Primary query ───────────────────────────────────────────
   const {
@@ -86,10 +75,12 @@ export function useNotifications(userId, limit = 50) {
     isError,
     refetch
   } = useQuery({
-    queryKey:    ['notifications', userId, guestSessionId],
-    queryFn:     () => fetchNotifications(userId, guestSessionId, limit),
+    queryKey:    ['notifications', userId, guestSessionId, profileId],
+    queryFn:     () => fetchNotifications(userId, guestSessionId, profileId, limit),
     enabled:     !!(userId || guestSessionId),
-    staleTime:   30_000,      // 30 s — realtime keeps it fresher
+    staleTime:   30_000,      
+    refetchInterval: 10_000,  
+    refetchIntervalInBackground: true, 
     refetchOnWindowFocus: false
   })
 
@@ -97,60 +88,48 @@ export function useNotifications(userId, limit = 50) {
 
   // ── Realtime subscription ───────────────────────────────────
   useEffect(() => {
-    if (!userId && !guestSessionId) return
+    const subKey = profileId || userId || guestSessionId
+    if (!subKey) return
 
-    // Teardown previous channel if userId changed
     if (channelRef.current) {
       supabase.removeChannel(channelRef.current)
       channelRef.current = null
     }
 
-    const filter = userId 
-      ? `user_id=eq.${userId}` 
+    const filter = profileId 
+      ? `profile_id=eq.${profileId}`
+      : userId 
+      ? `user_id=eq.${userId}`
       : `guest_session_id=eq.${guestSessionId}`
 
     const channel = supabase
-      .channel(`notifications_realtime_${userId || guestSessionId}`)
+      .channel(`notifications_realtime_${subKey}`)
       .on(
         'postgres_changes',
         {
-          event:  '*',               // INSERT | UPDATE | DELETE
+          event:  'INSERT',
           schema: 'public',
           table:  'notifications',
-          filter: filter
+          filter
         },
         (payload) => {
-          queryClient.setQueryData(['notifications', userId, guestSessionId], (old = []) => {
-            switch (payload.eventType) {
-              case 'INSERT':
-                if (old.some((n) => n.id === payload.new.id)) return old
-                
-                // --- Trigger Audio & Web Push Alert ---
-                try {
-                  // Play pleasant chime
-                  const audio = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg') 
-                  audio.volume = 0.5
-                  audio.play().catch(e => console.log('Audio autoplay prevented:', e))
+          queryClient.setQueryData(['notifications', userId, guestSessionId, profileId], (old = []) => {
+            try {
+              const audio = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg') 
+              audio.volume = 0.5
+              audio.play().catch(e => console.log('Audio autoplay prevented:', e))
 
-                  // Trigger Web Push Notification if permitted
-                  if (Notification.permission === 'granted') {
-                    new Notification(payload.new.title || 'New Notification', {
-                      body: payload.new.message || 'You have a new update in Health Tracker',
-                      icon: '/favicon.ico' // Or any app icon path you use
-                    })
-                  }
-                } catch (err) {
-                  console.error('Failed to play notification alert:', err)
-                }
-
-                return [payload.new, ...old]
-              case 'UPDATE':
-                return old.map((n) => (n.id === payload.new.id ? payload.new : n))
-              case 'DELETE':
-                return old.filter((n) => n.id !== payload.old.id)
-              default:
-                return old
+              if (Notification.permission === 'granted') {
+                new Notification('Health Tracker', {
+                  body: payload.new.message || 'New update available',
+                  icon: '/favicon.ico'
+                })
+              }
+            } catch (err) {
+              console.error('Failed to play notification alert:', err)
             }
+
+            return [payload.new, ...old]
           })
         }
       )
@@ -160,51 +139,51 @@ export function useNotifications(userId, limit = 50) {
 
     return () => {
       if (channelRef.current) {
-        supabase.removeChannel(channelRef.current)
+        // Only remove if not already closed
+        supabase.removeChannel(channelRef.current).catch(() => {})
         channelRef.current = null
       }
     }
-  }, [userId, guestSessionId, queryClient])
+  }, [userId, guestSessionId, profileId, queryClient])
 
-  // ── Mark single as read ─────────────────────────────────────
+  // ── Mutations ───────────────────────────────────────────────
   const markAsReadMutation = useMutation({
     mutationFn: updateNotificationRead,
     onMutate: async (id) => {
-      await queryClient.cancelQueries({ queryKey: ['notifications', userId, guestSessionId] })
-      const previous = queryClient.getQueryData(['notifications', userId, guestSessionId])
-      queryClient.setQueryData(['notifications', userId, guestSessionId], (old = []) =>
+      await queryClient.cancelQueries({ queryKey: ['notifications', userId, guestSessionId, profileId] })
+      const previous = queryClient.getQueryData(['notifications', userId, guestSessionId, profileId])
+      queryClient.setQueryData(['notifications', userId, guestSessionId, profileId], (old = []) =>
         old.map((n) => (n.id === id ? { ...n, is_read: true } : n))
       )
       return { previous }
     },
     onError: (_err, _id, ctx) => {
       if (ctx?.previous) {
-        queryClient.setQueryData(['notifications', userId, guestSessionId], ctx.previous)
+        queryClient.setQueryData(['notifications', userId, guestSessionId, profileId], ctx.previous)
       }
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['notifications', userId, guestSessionId] })
+      queryClient.invalidateQueries({ queryKey: ['notifications', userId, guestSessionId, profileId] })
     }
   })
 
-  // ── Mark all as read ────────────────────────────────────────
   const markAllAsReadMutation = useMutation({
-    mutationFn: () => updateAllNotificationsRead(userId, guestSessionId),
+    mutationFn: () => updateAllNotificationsRead(userId, guestSessionId, profileId),
     onMutate: async () => {
-      await queryClient.cancelQueries({ queryKey: ['notifications', userId, guestSessionId] })
-      const previous = queryClient.getQueryData(['notifications', userId, guestSessionId])
-      queryClient.setQueryData(['notifications', userId, guestSessionId], (old = []) =>
+      await queryClient.cancelQueries({ queryKey: ['notifications', userId, guestSessionId, profileId] })
+      const previous = queryClient.getQueryData(['notifications', userId, guestSessionId, profileId])
+      queryClient.setQueryData(['notifications', userId, guestSessionId, profileId], (old = []) =>
         old.map((n) => ({ ...n, is_read: true }))
       )
       return { previous }
     },
     onError: (_err, _vars, ctx) => {
       if (ctx?.previous) {
-        queryClient.setQueryData(['notifications', userId, guestSessionId], ctx.previous)
+        queryClient.setQueryData(['notifications', userId, guestSessionId, profileId], ctx.previous)
       }
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['notifications', userId, guestSessionId] })
+      queryClient.invalidateQueries({ queryKey: ['notifications', userId, guestSessionId, profileId] })
     }
   })
 

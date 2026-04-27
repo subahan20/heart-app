@@ -6,11 +6,11 @@ import MetricHistoryList from '../../../components/common/MetricHistoryList'
 import { useBreathingExercise } from '../../../hooks/useBreathingExercise'
 
 const ROUND_COLORS = [
-  { active: 'bg-blue-400 text-white shadow-blue-200'    },
-  { active: 'bg-blue-500 text-white shadow-blue-300'    },
-  { active: 'bg-indigo-500 text-white shadow-indigo-200'},
-  { active: 'bg-violet-500 text-white shadow-violet-200'},
-  { active: 'bg-green-500 text-white shadow-green-200'  },
+  { active: 'bg-emerald-400 text-white shadow-emerald-200' },
+  { active: 'bg-emerald-500 text-white shadow-emerald-300' },
+  { active: 'bg-emerald-600 text-white shadow-emerald-200' },
+  { active: 'bg-teal-500 text-white shadow-teal-200'    },
+  { active: 'bg-teal-600 text-white shadow-teal-200'    },
 ]
 
 export default function StressTab({
@@ -57,7 +57,7 @@ export default function StressTab({
               <label className="block text-sm font-medium text-gray-700">
                 How stressed are you today?
               </label>
-              <span className="text-xs font-semibold text-blue-600">
+              <span className="text-xs font-semibold text-emerald-600">
                 {Math.min(rounds, MAX_ROUNDS)} / {MAX_ROUNDS}
               </span>
             </div>

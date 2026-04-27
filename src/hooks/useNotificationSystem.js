@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../services/supabase'
 import { aiService } from '../services/aiService'
+import { useHealthProfile } from './useHealthProfile'
 
 /**
  * useNotificationSystem
@@ -11,6 +12,9 @@ export const useNotificationSystem = () => {
   const [notifications, setNotifications] = useState([])
   const [loading, setLoading] = useState(true)
   const [unreadCount, setUnreadCount] = useState(0)
+  
+  // MINIMALIST SOURCE OF TRUTH: localStorage
+  const profileId = localStorage.getItem('activeProfileId')
 
   // Fetch today's notifications
   const fetchNotifications = useCallback(async () => {
@@ -29,7 +33,9 @@ export const useNotificationSystem = () => {
         .eq('date', today)
         .order('created_at', { ascending: false })
 
-      if (user) {
+      if (profileId) {
+        query = query.eq('profile_id', profileId)
+      } else if (user) {
         query = query.eq('user_id', user.id)
       } else {
         query = query.eq('guest_session_id', guestSessionId)
@@ -46,7 +52,7 @@ export const useNotificationSystem = () => {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [profileId])
 
   // Mark a notification as read
   const markAsRead = async (id) => {
@@ -79,12 +85,14 @@ export const useNotificationSystem = () => {
 
       fetchNotifications()
 
-      const filter = user 
+      const filter = profileId
+        ? `profile_id=eq.${profileId}`
+        : user 
         ? `user_id=eq.${user.id}` 
         : `guest_session_id=eq.${guestSessionId}`
 
       channel = supabase
-        .channel(`public:notifications:guest_or_user`)
+        .channel(`public:notifications:guest_or_user_${profileId || 'none'}`)
         .on(
           'postgres_changes',
           {
@@ -117,7 +125,7 @@ export const useNotificationSystem = () => {
         supabase.removeChannel(channel)
       }
     }
-  }, [fetchNotifications])
+  }, [fetchNotifications, profileId])
 
   return {
     notifications,

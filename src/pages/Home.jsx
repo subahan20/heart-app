@@ -10,10 +10,11 @@ import { useHealthData } from '../hooks/useHealthData'
 import { useStreak } from '../hooks/useStreak'
 import { useToastNotifications } from '../hooks/useToastNotifications'
 import { useModalManager } from '../hooks/useModalManager'
-import { useNotificationSystem } from '../hooks/useNotificationSystem'
+import { useNotifications } from '../hooks/useNotifications'
 import { useCelebration } from '../hooks/useCelebration'
 import { useDailyMetrics } from '../hooks/useDailyMetrics'
-import { useWeeklyRewards } from '../hooks/useWeeklyRewards' // New import
+import { useWeeklyRewards } from '../hooks/useWeeklyRewards' 
+import { useSectionCompletion } from '../hooks/useSectionCompletion'
 import { aiService } from '../services/aiService'
 
 // Services
@@ -60,17 +61,18 @@ export default function Home() {
   const [congratsType, setCongratsType] = useState('')
 
   // Custom hooks
-  const { data: streak } = useStreak()
+  const { streak } = useStreak()
   const { modals, openModal, closeModal } = useModalManager()
   const celebration = useCelebration(0)
   const [dailyMetrics, dispatchMetrics] = useDailyMetrics()
-  const { profile } = useHealthProfile()
+  const { activeProfile: profile, activeProfileId, loading: profileLoading } = useHealthProfile()
   const streakCount = streak?.count || 0
-  const { notifications: allNotifications, loading: loadingNotifs, markAsRead } = useNotificationSystem() // Added markAsRead
+  const { user } = useHealthData()
+  const { notifications: allNotifications, isLoading: loadingNotifs, markAsRead } = useNotifications(user?.id)
   const { toasts, removeToast } = useToastNotifications(dailyMetrics, selectedDate)
-  const { useDailyData, useHistoryData, saveStressData } = useDailyTracking()
-  const dailyDataQuery = useDailyData(selectedDate)
-  const historyQuery = useHistoryData(7)
+  const { useDailyData } = useDailyTracking()
+  const { data: dailyData, isLoading: isDailyLoading } = useDailyData(selectedDate)
+  const { completionState, completedCount } = useSectionCompletion()
 
   // Weekly Rewards Detection
   const { newReward, clearReward } = useWeeklyRewards(streakCount)
@@ -85,12 +87,12 @@ export default function Home() {
     }
   }, [allNotifications])
 
-  const isLoading = dailyDataQuery.isLoading || profile === undefined || loadingNotifs
+  const isLoading = isDailyLoading || profileLoading || loadingNotifs
 
-  // 1. Synchronize data from dailyDataQuery to metrics state
+  // 1. Synchronize data from dailyData to metrics state
   useEffect(() => {
-    if (dailyDataQuery.data) {
-      const { diet, exercise, sleep, water, stress } = dailyDataQuery.data
+    if (dailyData) {
+      const { diet, exercise, sleep, water, stress } = dailyData
       
       const formattedExerciseData = exercise ? {
         date: selectedDate,
@@ -161,7 +163,7 @@ export default function Home() {
       // No data for this date, reset metrics
       dispatchMetrics({ type: 'RESET' })
     }
-  }, [dailyDataQuery.data, selectedDate])
+  }, [dailyData, selectedDate])
 
   // Stress update logic
   const updateStress = async (level) => {
@@ -170,7 +172,7 @@ export default function Home() {
     
     try {
       await saveStressData({
-        stressLevel: level,
+        stress_level: level,
         date: selectedDate
       })
     } catch (error) {
@@ -228,10 +230,6 @@ export default function Home() {
         if (!hasNotified) completedGoals.push('stress')
       }
 
-      if (completedGoals.length > 0) {
-        setCongratsType(completedGoals[0])
-        setTimeout(() => setCongratsType(''), 5000)
-      }
 
       // Streak is based on the 4 core metrics (diet, exercise, sleep, water)
       // Stress is considered a bonus and not mandatory for the daily streak
@@ -299,6 +297,7 @@ export default function Home() {
           dateRange={dateRange}
           setDateRange={setDateRange}
         />
+
 
         <div className="mt-8">
           {activeTab === 'diet' && (
