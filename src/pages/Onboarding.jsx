@@ -105,27 +105,7 @@ export default function Onboarding() {
     }
   }
 
-  // ── Pre-fill Form Data ──
-  useEffect(() => {
-    if (profile && !isAddMode && !formData.name) {
-      setFormData({
-        name: profile.name || '',
-        age: profile.age || '',
-        gender: profile.gender || '',
-        height: profile.height || '',
-        heightUnit: 'cm',
-        weight: profile.weight || '',
-        activityLevel: profile.activity_level || '',
-        sleepHours: profile.sleep_hours || '',
-        stressLevel: profile.stress_level || 3,
-        diseases: profile.diseases || [],
-        systolic: profile.systolic || '',
-        diastolic: profile.diastolic || '',
-        pulse: profile.pulse || '',
-        bloodSugar: profile.blood_sugar || ''
-      })
-    }
-  }, [profile, isAddMode])
+  // Removed pre-fill as requested by user
 
   const handleSubmit = async () => {
     try {
@@ -138,7 +118,23 @@ export default function Onboarding() {
       }
       const normWeightKg = parseFloat(formData.weight) || 0
 
-      const profileData = { ...formData, height: normHeightCm, weight: normWeightKg, bmi }
+      const profileData = { 
+        name: formData.name,
+        age: formData.age,
+        gender: formData.gender,
+        height: normHeightCm,
+        weight: normWeightKg,
+        bmi,
+        activity_level: formData.activityLevel,
+        sleep_hours: formData.sleepHours,
+        stress_level: formData.stressLevel,
+        blood_sugar: formData.bloodSugar,
+        systolic: formData.systolic,
+        diastolic: formData.diastolic,
+        pulse: formData.pulse,
+        diseases: formData.diseases,
+        onboarding_complete: true
+      }
       
       // CRITICAL: Pass profile.id so useHealthProfile knows which row to UPDATE
       // If isAddMode is true, updateProfile will ignore the ID and INSERT a new row

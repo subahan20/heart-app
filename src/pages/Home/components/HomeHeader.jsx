@@ -11,7 +11,27 @@ import ProfileDetailModal from '../../../features/profiles/ProfileDetailModal'
 // ── Profile Switcher Modal ───────────────────────────────────
 // ── Profile Switcher Modal ───────────────────────────────────
 function ProfileSwitcherModal({ isOpen, onClose, profiles, activeProfile, onSwitch, navigate, onViewDetails }) {
+  const [isAdding, setIsAdding] = useState(false)
+  const [newName, setNewName] = useState('')
+  const { createProfile } = useHealthProfile()
+
   if (!isOpen) return null
+
+  const handleAdd = async (e) => {
+    e.preventDefault()
+    if (!newName.trim()) return
+    try {
+      const p = await createProfile(newName)
+      setNewName('')
+      setIsAdding(false)
+      // Switch to the new profile
+      const targetPath = '/onboarding'
+      onSwitch(p.id, targetPath)
+      onClose()
+    } catch (err) {
+      console.error('Failed to create profile:', err)
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 sm:p-6 transition-all duration-300 animate-in fade-in duration-300">
@@ -314,7 +334,7 @@ export default function HomeHeader({
                 aria-label="Profiles"
               >
                 <User className="w-5 h-5" />
-                {allProfiles.length > 1 && (
+                {allProfiles.length > 0 && (
                   <span className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 text-slate-950 text-[10px] font-black rounded-full flex items-center justify-center shadow-sm border border-white">
                     {allProfiles.length}
                   </span>
