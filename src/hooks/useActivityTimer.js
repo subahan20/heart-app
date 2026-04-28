@@ -2,6 +2,12 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import { aiService } from '../services/aiService';
 
+// Validate UUID v4 format
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isValidUUID(value) {
+  return typeof value === 'string' && UUID_REGEX.test(value);
+}
+
 export const useActivityTimer = ({ activityType, durationSeconds, onComplete, onError }) => {
   const [session, setSession] = useState(null);
   const [timeRemaining, setTimeRemaining] = useState(durationSeconds);
@@ -29,44 +35,60 @@ export const useActivityTimer = ({ activityType, durationSeconds, onComplete, on
       const { data: { user } } = await supabase.auth.getUser();
       const guestSessionId = !user ? aiService.getChatSessionId() : null;
 
+      const validUserId = isValidUUID(user?.id) ? user.id : null;
       const params = {
         p_activity_type: String(activityType),
         p_duration_seconds: Number(durationSeconds || 0),
         p_exercise_name: metadata.exerciseName ? String(metadata.exerciseName) : null,
         p_intensity: metadata.intensity ? String(metadata.intensity) : 'moderate',
         p_calories_burned: metadata.caloriesEstimate ? Number(metadata.caloriesEstimate) : null,
-        p_user_id: user?.id || null, // UUID string or null
+        p_user_id: validUserId,
         p_guest_session_id: !user ? guestSessionId : null // String or null
       };
 
-      // Call RPC to start session
-      const { data, error: rpcError } = await supabase.rpc('start_activity_session', params);
+      console.error('DEBUG: sending params to start_activity_session:', params);
 
-      if (rpcError) throw rpcError;
-
-      if (data && data.length > 0 && data[0].success) {
-        const newSession = {
-          id: data[0].session_id,
+      // Call RPC to start session ONLY if duration > 0
+      let newSession = null;
+      if (durationSeconds > 0) {
+        const { data, error: rpcError } = await supabase.rpc('start_activity_session', params);
+        if (rpcError) {
+          console.error('DEBUG: rpcError:', rpcError);
+          throw rpcError;
+        }
+        if (data && data.length > 0 && data[0].success) {
+          newSession = {
+            id: data[0].session_id,
+            startTime: new Date(),
+            duration: durationSeconds,
+            activityType
+          };
+        } else {
+          throw new Error(data?.[0]?.message || 'Failed to start session');
+        }
+      } else {
+        // Mock session for open-ended timers since backend requires duration > 0
+        newSession = {
+          id: `local_${Date.now()}`,
           startTime: new Date(),
-          duration: durationSeconds,
+          duration: 0,
           activityType
         };
-        
-        setSession(newSession);
-        setIsRunning(true);
-        setIsCompleted(false);
-        setTimeRemaining(durationSeconds);
-        startTimeRef.current = Date.now();
-        
-        // Start countdown
-        startCountdown();
-      } else {
-        throw new Error(data?.[0]?.message || 'Failed to start session');
       }
+
+      setSession(newSession);
+      setIsRunning(true);
+      setIsCompleted(false);
+      setTimeRemaining(durationSeconds);
+      startTimeRef.current = Date.now();
+      
+      // Start countdown (or countup)
+      startCountdown();
     } catch (err) {
       const errorMessage = err.message || 'Failed to start timer';
       setError(errorMessage);
       onError?.(errorMessage);
+      throw err; // Bubble up the error so handleStart in ExerciseModal can catch it
     } finally {
       setIsLoading(false);
     }
@@ -80,15 +102,20 @@ export const useActivityTimer = ({ activityType, durationSeconds, onComplete, on
 
     intervalRef.current = setInterval(() => {
       const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
-      const remaining = Math.max(0, durationSeconds - elapsed);
       
-      setTimeRemaining(remaining);
+      if (durationSeconds > 0) {
+        const remaining = Math.max(0, durationSeconds - elapsed);
+        setTimeRemaining(remaining);
 
-      if (remaining === 0) {
-        clearInterval(intervalRef.current);
-        setIsRunning(false);
-        setIsCompleted(true);
-        onComplete?.();
+        if (remaining === 0) {
+          clearInterval(intervalRef.current);
+          setIsRunning(false);
+          setIsCompleted(true);
+          onComplete?.();
+        }
+      } else {
+        // Open-ended timer (count up)
+        setTimeRemaining(elapsed);
       }
     }, 100);
   }, [durationSeconds, onComplete]);

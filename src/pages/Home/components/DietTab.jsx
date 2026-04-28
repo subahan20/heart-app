@@ -9,8 +9,10 @@ export default function DietTab({
   dailyMetrics,
   isPastDate,
   openModal,
-  dateRange
+  dateRange,
+  accessLevel
 }) {
+  const isLocked = accessLevel !== 'FULL'
   const { currentPlan } = useTransformation()
   const weekNumber = currentPlan?.week_number
 
@@ -24,7 +26,8 @@ export default function DietTab({
               onClick={() => openModal('todaysMeals')}
               variant="outline"
               size="sm"
-              className="flex-1 sm:flex-none items-center gap-2 border-green-200 text-green-700 hover:bg-green-50 px-4"
+              disabled={isLocked}
+              className={`flex-1 sm:flex-none items-center gap-2 px-4 ${isLocked ? 'opacity-50 cursor-not-allowed' : 'border-green-200 text-green-700 hover:bg-green-50'}`}
             >
               <Utensils className="w-4 h-4" />
               Today's Meals
@@ -33,7 +36,8 @@ export default function DietTab({
               onClick={() => openModal('weeklyDiet')}
               variant="outline"
               size="sm"
-              className="flex-1 sm:flex-none items-center gap-2 border-emerald-200 text-emerald-700 hover:bg-emerald-50 px-4"
+              disabled={isLocked}
+              className={`flex-1 sm:flex-none items-center gap-2 px-4 ${isLocked ? 'opacity-50 cursor-not-allowed' : 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'}`}
             >
               <Sparkles className="w-4 h-4 text-emerald-500" />
               Weekly Plan
@@ -42,7 +46,8 @@ export default function DietTab({
               onClick={() => openModal('insights')}
               variant="outline"
               size="sm"
-              className="flex-1 sm:flex-none items-center gap-2 border-green-200 text-green-700 hover:bg-green-50 px-4"
+              disabled={isLocked}
+              className={`flex-1 sm:flex-none items-center gap-2 px-4 ${isLocked ? 'opacity-50 cursor-not-allowed' : 'border-green-200 text-green-700 hover:bg-green-50'}`}
             >
               <Sparkles className="w-4 h-4" />
               Summary
@@ -51,7 +56,23 @@ export default function DietTab({
         </CardHeader>
 
         <CardContent className="space-y-4">
-          {(!dailyMetrics.dietData?.meals || 
+          {isLocked ? (
+            <div className="flex flex-col items-center justify-center p-8 bg-gray-50 rounded-2xl border border-gray-100 border-dashed text-center">
+              <Utensils className="w-12 h-12 text-gray-300 mb-4" />
+              <h3 className="text-lg font-semibold text-gray-700 mb-2">Feature Locked</h3>
+              <p className="text-gray-500 mb-6 max-w-sm">
+                {accessLevel === 'GUEST' 
+                  ? 'Please sign in to start tracking your nutrition and meals.' 
+                  : 'Complete your onboarding to unlock diet tracking and meal logging.'}
+              </p>
+              <Button
+                onClick={() => openModal('diet')}
+                className="bg-green-600 hover:bg-green-700 text-white shadow-md hover:shadow-lg transition-all"
+              >
+                {accessLevel === 'GUEST' ? '🔐 Sign In to Start' : '✨ Complete Onboarding'}
+              </Button>
+            </div>
+          ) : (!dailyMetrics.dietData?.meals || 
             (Object.keys(dailyMetrics.dietData.meals).length === 0) ||
             (Object.values(dailyMetrics.dietData.meals).every(arr => !arr || arr.length === 0))) ? (
             <div className="flex flex-col items-center justify-center p-8 bg-gray-50 rounded-2xl border border-gray-100 border-dashed text-center">
@@ -117,10 +138,10 @@ export default function DietTab({
           <div className="mt-8 flex justify-center sm:justify-end">
             <Button 
               onClick={() => openModal('diet')} 
-              disabled={isPastDate}
-              className="w-full sm:w-[300px]"
+              disabled={isPastDate || isLocked}
+              className={`w-full sm:w-[300px] ${isLocked ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : ''}`}
             >
-              {isPastDate ? 'Diet History' : `Log Your Meals${weekNumber ? ` (Week ${weekNumber})` : ''}`}
+              {isLocked ? 'Onboarding Required' : (isPastDate ? 'Diet History' : `Log Your Meals${weekNumber ? ` (Week ${weekNumber})` : ''}`)}
             </Button>
           </div>
         </CardContent>

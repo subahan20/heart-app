@@ -73,9 +73,12 @@ export default function ExerciseTrackerModal({ onClose, selectedDate, dateRange,
 
   // Calculate elapsed time from secure timer
   useEffect(() => {
-    if (timerSession && duration > 0) {
-      const elapsed = duration * 60 - timeRemaining
-      setElapsedTime(elapsed)
+    if (timerSession) {
+      if (duration > 0) {
+        setElapsedTime(duration * 60 - timeRemaining)
+      } else {
+        setElapsedTime(timeRemaining)
+      }
     }
   }, [timerSession, timeRemaining, duration])
 
@@ -111,8 +114,13 @@ export default function ExerciseTrackerModal({ onClose, selectedDate, dateRange,
     
     try {
       setIsExerciseActive(true)
-      // Start secure timer session
-      await startTimerSession()
+      // Start secure timer session only if duration > 0
+      if (duration > 0) {
+        await startTimerSession()
+      } else {
+        // For open-ended sessions (duration = 0), we bypass the backend RPC 
+        // and rely solely on the local timer and the completeExercise save.
+      }
     } catch (error) {
       console.error('Failed to start exercise:', error)
       setIsExerciseActive(false)
@@ -128,17 +136,17 @@ export default function ExerciseTrackerModal({ onClose, selectedDate, dateRange,
   const completeExercise = async () => {
     if (elapsedTime === 0) return
 
-    // For timed sessions, ensure backend validation passes
+    // For timed sessions, attempt to complete the backend secure timer
     if (duration > 0 && timerSession) {
       try {
         const success = await completeTimerSession()
         if (!success) {
-          console.warn('Exercise completion rejected by backend')
-          return
+          console.warn('Backend timer completion returned false. Proceeding with local save.')
         }
       } catch (error) {
-        console.error('Backend validation failed:', error)
-        return
+        console.error('Backend timer RPC failed:', error)
+        // We no longer return early here. 
+        // We want the exercise to save locally to daily_exercise even if the RPC crashes.
       }
     }
 

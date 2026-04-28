@@ -16,8 +16,17 @@ DROP FUNCTION IF EXISTS public.start_activity_session(varchar, integer, uuid, te
 DROP FUNCTION IF EXISTS public.start_activity_session(varchar, integer, uuid, text, text, text, integer);
 DROP FUNCTION IF EXISTS public.start_activity_session(text, integer, uuid, text, text, text, integer);
 DROP FUNCTION IF EXISTS public.start_activity_session(text, numeric, text, text, text, text, numeric);
+DROP FUNCTION IF EXISTS public.start_activity_session(text, numeric, uuid, text, text, text, numeric);
+DROP FUNCTION IF EXISTS public.start_activity_session(text, integer, uuid, text, text, text, integer);
 
 -- 3. CREATE THE FINAL ULTRA-ROBUST START FUNCTION
+-- Drop old signatures first to avoid "cannot remove parameter defaults" error
+DROP FUNCTION IF EXISTS public.start_activity_session(varchar, integer, uuid, text);
+DROP FUNCTION IF EXISTS public.start_activity_session(varchar, integer, uuid, text, text, text, integer);
+DROP FUNCTION IF EXISTS public.start_activity_session(text, integer, uuid, text, text, text, integer);
+DROP FUNCTION IF EXISTS public.start_activity_session(text, numeric, text, text, text, text, numeric);
+DROP FUNCTION IF EXISTS public.complete_activity_session(uuid, uuid, text);
+
 CREATE OR REPLACE FUNCTION public.start_activity_session(
     p_activity_type TEXT,
     p_duration_seconds NUMERIC,
@@ -41,7 +50,12 @@ DECLARE
 BEGIN
     -- Safely handle UUID conversion
     IF p_user_id IS NOT NULL AND p_user_id <> '' THEN
-        v_user_id := p_user_id::UUID;
+        BEGIN
+            v_user_id := p_user_id::UUID;
+        EXCEPTION WHEN invalid_text_representation THEN
+            -- p_user_id is not a valid UUID (e.g. guest session string), treat as null
+            v_user_id := NULL;
+        END;
     END IF;
 
     INSERT INTO public.activity_sessions (

@@ -31,10 +31,10 @@ export const useExerciseData = (selectedDate) => {
         console.log('Querying for guest_session_id:', guestSessionId)
       }
       
-      // Fix date filtering - use proper date boundaries
+      // Fix date filtering - use local date, not UTC, to avoid timezone issues
       const today = selectedDate || new Date().toISOString().split('T')[0]
-      const startOfDay = new Date(today + 'T00:00:00.000Z').toISOString()
-      const endOfDay = new Date(today + 'T23:59:59.999Z').toISOString()
+      const startOfDay = today + 'T00:00:00'
+      const endOfDay = today + 'T23:59:59'
       
       console.log('Date range:', { startOfDay, endOfDay })
       
@@ -91,9 +91,7 @@ export const useExerciseData = (selectedDate) => {
 
   // Fetch exercise data when component mounts or date changes
   useEffect(() => {
-    if (selectedDate) {
-      fetchExerciseData()
-    }
+    fetchExerciseData()
   }, [selectedDate, fetchExerciseData])
 
   // Add realtime subscription for immediate UI updates

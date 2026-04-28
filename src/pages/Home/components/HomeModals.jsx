@@ -15,6 +15,7 @@ import ExerciseSessionsModal from '../../../features/exercise/ExerciseSessionsMo
 import WeeklyCheckinModal from '../../../features/transformation/WeeklyCheckinModal'
 import WeeklyDietPlanModal from '../../../features/transformation/WeeklyDietPlanModal'
 import { useTransformation } from '../../../hooks/useTransformation'
+import { useExerciseData } from '../../../hooks/useExerciseData'
 import { Phone, Sparkles, AlertTriangle, Activity, TrendingUp, Utensils, X, Loader2, Dumbbell, Calendar, Heart } from 'lucide-react'
 
 export default function HomeModals({ 
@@ -27,6 +28,21 @@ export default function HomeModals({
 }) {
   const { currentPlan } = useTransformation()
   const weekNumber = currentPlan?.week_number
+  const { exercises: rawExercises } = useExerciseData(selectedDate)
+  
+  const allExercises = (rawExercises || []).map(ex => ({
+    id: ex.id,
+    type: ex.type || ex.exercise_name || ex.activity_type,
+    duration: ex.duration || Math.round((ex.actual_duration_seconds || ex.duration_seconds || 0) / 60) || (ex.duration_seconds > 0 ? 1 : 0),
+    calories: ex.calories || ex.calories_burned || 0,
+    time: new Date(ex.start_time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+    distance: 0
+  }))
+
+  const formattedExerciseHistory = [{
+    date: selectedDate || new Date().toISOString().split('T')[0],
+    exercises: allExercises
+  }]
 
   return (
     <>
@@ -115,7 +131,7 @@ export default function HomeModals({
         title="Today's Exercise Sessions"
       >
         <div className="max-h-[70vh] overflow-y-auto no-scrollbar py-2">
-          <ExerciseHistoryList data={dailyMetrics.exerciseData} />
+          <ExerciseHistoryList data={dateRange[0] && dateRange[1] ? dailyMetrics.exerciseData : formattedExerciseHistory} />
           <Button 
             onClick={() => closeModal('todaysSessions')}
             className="w-full mt-6 bg-orange-600 hover:bg-orange-700"

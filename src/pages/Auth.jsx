@@ -29,7 +29,7 @@ const Auth = () => {
         <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-teal-500/10 blur-[120px] rounded-full animate-pulse animation-delay-2000"></div>
         
         {/* Animated Grid lines */}
-        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 pointer-events-none"></div>
+        {/* Background noise effect removed due to broken external link */}
       </div>
 
       <div className="relative z-10 w-full max-w-md">
@@ -47,6 +47,7 @@ const Auth = () => {
           </p>
           
           <button
+            id="google-auth-btn"
             onClick={handleLogin}
             className="group flex items-center justify-center gap-4 w-full bg-white hover:bg-slate-100 text-slate-950 font-black py-4 px-6 rounded-2xl transition-all shadow-xl hover:shadow-emerald-500/10 active:scale-[0.98]"
           >

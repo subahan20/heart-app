@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Flame, TrendingUp, UserPlus, CheckCircle2, Phone, Sparkles, Activity, Clock, Trophy, User, LogOut, Eye } from 'lucide-react'
+import { Flame, TrendingUp, CheckCircle2, Phone, Sparkles, Activity, Clock, Trophy, User, LogOut, Eye } from 'lucide-react'
 import { Button } from '../../../components/common/Button'
 import NotificationPanel from '../../../features/notifications/NotificationPanel'
 import { supabase } from '../../../services/supabase'
@@ -107,7 +107,7 @@ function ProfileSwitcherModal({ isOpen, onClose, profiles, activeProfile, onSwit
         <div className="p-4 bg-slate-900/50 border-t border-slate-800">
           <Button
             onClick={() => {
-              navigate('/onboarding')
+              navigate('/onboarding?mode=add')
               onClose()
             }}
             variant="outline"
@@ -128,12 +128,36 @@ export default function HomeHeader({
   openModal, 
   streakCount, 
   celebration,
-  profile: oldProfileProp // We'll use our hook instead to be safer
+  profile: oldProfileProp,
+  accessLevel
 }) {
   const [user, setUser] = useState(null)
   const [isSwitcherOpen, setIsSwitcherOpen] = useState(false)
   const { activeProfile, allProfiles, switchProfile, isLoading } = useHealthProfile()
   const [viewingProfile, setViewingProfile] = useState(null)
+
+  // Helper to handle guarded clicks
+  const handleGuardedAction = (actionType, modalName) => {
+    if (accessLevel === 'GUEST') {
+      // Not logged in → go to auth first
+      navigate('/auth')
+      return
+    }
+    if (accessLevel === 'PENDING') {
+      // Logged in but not onboarded → go to onboarding
+      navigate('/onboarding')
+      return
+    }
+    
+    // FULL ACCESS — perform the actual action
+    if (actionType === 'modal') {
+      openModal(modalName)
+    } else if (actionType === 'onboarding') {
+      navigate('/onboarding?mode=add')
+    } else if (typeof actionType === 'function') {
+      actionType()
+    }
+  }
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setUser(user))
@@ -235,45 +259,30 @@ export default function HomeHeader({
               </div>
               */}
 
-              {user && (
-                <div className="group relative flex-shrink-0">
-                  <Button 
-                    onClick={() => navigate('/onboarding')}
-                    variant="outline" 
-                    size="sm"
-                    className="flex items-center gap-2 px-2 sm:px-3 h-9 transition-all duration-300 border-blue-200 text-blue-700 hover:bg-blue-50 bg-white/50 backdrop-blur-sm shadow-sm"
-                  >
-                    <UserPlus className="w-4 h-4 text-blue-500" />
-                    <span className="hidden lg:inline">Onboarding</span>
-                  </Button>
-                  <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 lg:hidden pointer-events-none transition-opacity whitespace-nowrap z-50">
-                    Onboarding
-                  </div>
-                </div>
-              )}
+
 
               <div className="group relative flex-shrink-0">
                 <Button 
-                  onClick={() => openModal('weeklyCheckin')}
+                  onClick={() => handleGuardedAction('modal', 'weeklyCheckin')}
                   variant="outline" 
                   size="sm"
-                  disabled={isCheckinDisabled}
-                  className={`flex items-center gap-2 px-2 sm:px-3 h-9 transition-all duration-300 ${isCheckinDisabled 
+                  disabled={isCheckinDisabled && accessLevel === 'FULL'}
+                  className={`flex items-center gap-2 px-2 sm:px-3 h-9 transition-all duration-300 ${ (isCheckinDisabled && accessLevel === 'FULL')
                     ? 'border-gray-200 bg-gray-50 text-gray-400 opacity-70 cursor-not-allowed' 
                     : 'border-orange-200 text-orange-700 hover:bg-orange-50 bg-white/50 backdrop-blur-sm'
                   }`}
                 >
-                  <Sparkles className={`w-4 h-4 ${isCheckinDisabled ? 'text-gray-300' : 'text-orange-500'}`} />
+                  <Sparkles className={`w-4 h-4 ${(isCheckinDisabled && accessLevel === 'FULL') ? 'text-gray-300' : 'text-orange-500'}`} />
                   <span className="hidden lg:inline">Check-in</span>
                 </Button>
                 <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 lg:hidden pointer-events-none transition-opacity whitespace-nowrap z-50">
-                  {checkinStatusText}
+                  {accessLevel !== 'FULL' ? 'Setup Required' : checkinStatusText}
                 </div>
               </div>
 
               <div className="group relative flex-shrink-0">
                 <Button 
-                  onClick={() => openModal('dailyProgress')}
+                  onClick={() => handleGuardedAction('modal', 'dailyProgress')}
                   variant="outline" 
                   size="sm"
                   className="flex items-center gap-2 border-emerald-200 text-emerald-700 hover:bg-emerald-50 bg-white/50 backdrop-blur-sm px-2 sm:px-3 h-9"
@@ -282,13 +291,13 @@ export default function HomeHeader({
                   <span className="hidden lg:inline">Progress</span>
                 </Button>
                 <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 lg:hidden pointer-events-none transition-opacity whitespace-nowrap z-50">
-                  Daily Progress
+                  {accessLevel !== 'FULL' ? 'Setup Required' : 'Daily Progress'}
                 </div>
               </div>
 
               <div className="group relative flex-shrink-0">
                 <Button 
-                  onClick={() => openModal('bookCall')}
+                  onClick={() => handleGuardedAction('modal', 'bookCall')}
                   size="sm"
                   className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white border-0 shadow-sm px-2 sm:px-3 h-9"
                 >
@@ -296,7 +305,7 @@ export default function HomeHeader({
                   <span className="hidden lg:inline">Book</span>
                 </Button>
                 <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 lg:hidden pointer-events-none transition-opacity whitespace-nowrap z-50">
-                  Book a Call
+                  {accessLevel !== 'FULL' ? 'Setup Required' : 'Book a Call'}
                 </div>
               </div>
 
@@ -309,12 +318,14 @@ export default function HomeHeader({
                 </div>
               )}
 
-              <div className={`flex-shrink-0 flex items-center gap-1 bg-orange-50 px-2 sm:px-3 py-1 rounded-full border border-orange-100 shadow-sm transition-all duration-300 ${celebration.isCountBumping ? 'scale-110 bg-orange-100' : 'scale-100'}`}>
-                <Flame className={`w-4 h-4 sm:w-5 h-5 transition-colors ${streakCount > 0 ? 'text-orange-600 fill-orange-500' : 'text-gray-300'}`} />
-                <span className="font-black text-orange-700 text-xs sm:text-sm">
-                  {streakCount}
-                </span>
-              </div>
+              {accessLevel === 'FULL' && (
+                <div className={`flex-shrink-0 flex items-center gap-1 bg-orange-50 px-2 sm:px-3 py-1 rounded-full border border-orange-100 shadow-sm transition-all duration-300 ${celebration.isCountBumping ? 'scale-110 bg-orange-100' : 'scale-100'}`}>
+                  <Flame className={`w-4 h-4 sm:w-5 h-5 transition-colors ${streakCount > 0 ? 'text-orange-600 fill-orange-500' : 'text-gray-300'}`} />
+                  <span className="font-black text-orange-700 text-xs sm:text-sm">
+                    {streakCount}
+                  </span>
+                </div>
+              )}
           </div>
 
           <div className="relative flex-shrink-0">

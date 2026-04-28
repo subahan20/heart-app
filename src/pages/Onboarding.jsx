@@ -119,26 +119,27 @@ export default function Onboarding() {
       const normWeightKg = parseFloat(formData.weight) || 0
 
       const profileData = { 
-        name: formData.name,
-        age: formData.age,
-        gender: formData.gender,
-        height: normHeightCm,
-        weight: normWeightKg,
-        bmi,
-        activity_level: formData.activityLevel,
-        sleep_hours: formData.sleepHours,
-        stress_level: formData.stressLevel,
-        blood_sugar: formData.bloodSugar,
-        systolic: formData.systolic,
-        diastolic: formData.diastolic,
-        pulse: formData.pulse,
-        diseases: formData.diseases,
+        name: formData.name || null,
+        age: parseInt(formData.age) || null,
+        gender: formData.gender || null,
+        height: normHeightCm || null,
+        weight: normWeightKg || null,
+        bmi: parseFloat(bmi) || null,
+        activity_level: formData.activityLevel || null,
+        sleep_hours: parseInt(formData.sleepHours) || null,
+        stress_level: parseInt(formData.stressLevel) || null,
+        blood_sugar: parseInt(formData.bloodSugar) || null,
+        systolic: parseInt(formData.systolic) || null,
+        diastolic: parseInt(formData.diastolic) || null,
+        pulse: parseInt(formData.pulse) || null,
+        diseases: formData.diseases || [],
         onboarding_complete: true
       }
       
-      // CRITICAL: Pass profile.id so useHealthProfile knows which row to UPDATE
-      // If isAddMode is true, updateProfile will ignore the ID and INSERT a new row
-      await updateProfile(profile?.id, profileData, isAddMode)
+      // CRITICAL: Pass profile?.id or null. 
+      // useHealthProfile will now auto-switch to INSERT if id is missing.
+      const targetId = profile?.id && profile.id !== 'undefined' ? profile.id : null
+      await updateProfile(targetId, profileData, isAddMode)
       
       toast.info('🚀 Personalizing your heart-health plan...')
       await generateFirstPlan(profileData)

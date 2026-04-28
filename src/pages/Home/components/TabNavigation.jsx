@@ -1,5 +1,5 @@
 import React from 'react'
-import { Menu, X } from 'lucide-react'
+import { Menu, X, Lock } from 'lucide-react'
 import { Button } from '../../../components/common/Button'
 import DateFilter from '../../../components/common/DateFilter'
 import { format } from 'date-fns'
@@ -14,8 +14,10 @@ export default function TabNavigation({
   selectedDate,
   setSelectedDate,
   dateRange,
-  setDateRange
+  setDateRange,
+  accessLevel
 }) {
+  const isLocked = accessLevel !== 'FULL'
   return (
     <div className="mb-8 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
       <div className="w-full sm:w-auto">
@@ -93,13 +95,26 @@ export default function TabNavigation({
       </div>
 
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
-         <div className="flex-1 lg:flex-none">
-           <DateFilter
-             selectedDate={new Date(selectedDate)}
-             onDateChange={(date) => setSelectedDate(format(date, 'yyyy-MM-dd'))}
-             dateRange={dateRange}
-             onRangeChange={setDateRange}
-           />
+         <div className={`flex-1 lg:flex-none relative ${isLocked ? 'opacity-50' : ''}`}>
+           {isLocked && (
+             <div className="absolute inset-0 z-10 cursor-not-allowed rounded-xl flex items-center justify-center" title="Complete onboarding to use date navigation">
+               <div className="absolute inset-0 rounded-xl" />
+             </div>
+           )}
+           <div className={isLocked ? 'pointer-events-none' : ''}>
+             <DateFilter
+               selectedDate={new Date(selectedDate)}
+               onDateChange={(date) => setSelectedDate(format(date, 'yyyy-MM-dd'))}
+               dateRange={dateRange}
+               onRangeChange={setDateRange}
+             />
+           </div>
+           {isLocked && (
+             <div className="absolute -bottom-6 left-0 right-0 flex items-center justify-center gap-1 text-[10px] text-gray-400 font-medium">
+               <Lock className="w-3 h-3" />
+               <span>{accessLevel === 'GUEST' ? 'Sign in to use' : 'Onboarding required'}</span>
+             </div>
+           )}
          </div>
       </div>
     </div>

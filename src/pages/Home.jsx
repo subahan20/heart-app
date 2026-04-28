@@ -60,9 +60,9 @@ export default function Home() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [congratsType, setCongratsType] = useState('')
 
-  // Custom hooks
+  // ── Data hooks (must come before accessLevel) ──
   const { streak } = useStreak()
-  const { modals, openModal, closeModal } = useModalManager()
+  const { modals, openModal: baseOpenModal, closeModal } = useModalManager()
   const celebration = useCelebration(0)
   const [dailyMetrics, dispatchMetrics] = useDailyMetrics()
   const { activeProfile: profile, activeProfileId, loading: profileLoading } = useHealthProfile()
@@ -76,6 +76,29 @@ export default function Home() {
 
   // Weekly Rewards Detection
   const { newReward, clearReward } = useWeeklyRewards(streakCount)
+
+  // ── Access Control Logic (needs user & profile from hooks above) ──
+  // GUEST: Not logged in
+  // PENDING: Logged in, but no complete profile / onboarding
+  // FULL: Logged in and onboarded
+  const accessLevel = useMemo(() => {
+    if (!user) return 'GUEST'
+    if (!profile || !profile.onboarding_complete) return 'PENDING'
+    return 'FULL'
+  }, [user, profile])
+
+  // Guarded openModal — redirects GUEST → /auth, PENDING → /onboarding
+  const openModal = useCallback((modalName) => {
+    if (accessLevel === 'GUEST') {
+      navigate('/auth')
+      return
+    }
+    if (accessLevel === 'PENDING') {
+      navigate('/onboarding')
+      return
+    }
+    baseOpenModal(modalName)
+  }, [accessLevel, navigate, baseOpenModal])
 
   // Group notifications for easier access
   const healthStatus = useMemo(() => {
@@ -94,16 +117,21 @@ export default function Home() {
     if (dailyData) {
       const { diet, exercise, sleep, water, stress } = dailyData
       
+      // exercise comes from daily_exercise table with { exercises: [], total_minutes, total_calories }
       const formattedExerciseData = exercise ? {
         date: selectedDate,
-        exercises: exercise.sessions.map(s => ({
-          id: s.id,
-          type: s.activity_type,
-          duration: Math.round((s.actual_duration_seconds || s.duration_seconds) / 60),
-          calories: Math.round((s.actual_duration_seconds || s.duration_seconds) / 60 * 8),
-          time: new Date(s.start_time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-          intensity: 'moderate'
-        }))
+        exercises: (exercise.exercises || []).map(ex => ({
+          id: ex.id || Date.now(),
+          type: ex.type || ex.activity_type || 'Exercise',
+          duration: ex.duration || Math.round((ex.duration_seconds || 0) / 60),
+          duration_label: ex.duration_label,
+          calories: ex.calories || 0,
+          time: ex.time || '',
+          distance: ex.distance,
+          intensity: ex.intensity || 'moderate'
+        })),
+        total_minutes: exercise.total_minutes || 0,
+        total_calories: exercise.total_calories || 0
       } : null
 
       dispatchMetrics({
@@ -282,6 +310,7 @@ export default function Home() {
         openModal={openModal}
         celebration={celebration}
         profile={profile}
+        accessLevel={accessLevel}
       />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -296,6 +325,7 @@ export default function Home() {
           setSelectedDate={setSelectedDate}
           dateRange={dateRange}
           setDateRange={setDateRange}
+          accessLevel={accessLevel}
         />
 
 
@@ -306,6 +336,7 @@ export default function Home() {
               openModal={openModal}
               isPastDate={isPastDate}
               dateRange={dateRange}
+              accessLevel={accessLevel}
             />
           )}
 
@@ -315,6 +346,8 @@ export default function Home() {
               openModal={openModal}
               isPastDate={isPastDate}
               dateRange={dateRange}
+              selectedDate={selectedDate}
+              accessLevel={accessLevel}
             />
           )}
 
@@ -324,6 +357,7 @@ export default function Home() {
               openModal={openModal}
               isPastDate={isPastDate}
               dateRange={dateRange}
+              accessLevel={accessLevel}
             />
           )}
 
@@ -334,6 +368,7 @@ export default function Home() {
               isPastDate={isPastDate}
               selectedDate={selectedDate}
               dateRange={dateRange}
+              accessLevel={accessLevel}
             />
           )}
 
@@ -345,6 +380,7 @@ export default function Home() {
               dateRange={dateRange}
               updateStress={updateStress}
               selectedDate={selectedDate}
+              accessLevel={accessLevel}
             />
           )}
 

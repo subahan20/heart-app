@@ -41,7 +41,8 @@ export default function ExerciseModal({ onClose, selectedDate }) {
   const [showTimer, setShowTimer] = useState(false)
   const [showCompletionScreen, setShowCompletionScreen] = useState(false)
   const { profile } = useHealthProfile()
-  const { useDailyData } = useDailyTracking()
+  const { useDailyData, saveExerciseData } = useDailyTracking()
+  const dailyDataQuery = useDailyData(selectedDate)
   const { exercises: existingExercises, loading: exercisesLoading, refetch: refetchExercises } = useExerciseData(selectedDate)
   
   // Secure timer hook for exercise sessions
@@ -208,6 +209,40 @@ export default function ExerciseModal({ onClose, selectedDate }) {
     setShowCompletionScreen(true)
     setShowTimer(false)
     
+    // Also save to daily_exercise aggregate table to show in the Dashboard History
+    const existingAggregateExercises = dailyDataQuery.data?.exercise?.exercises || []
+    
+    const newExerciseAggregate = {
+      id: newExercise.id,
+      type: newExercise.type,
+      duration: newExercise.duration,
+      duration_seconds: actualTimeSeconds,
+      duration_label: newExercise.duration > 0 
+        ? `${newExercise.duration}m ${actualTimeSeconds % 60 > 0 ? (actualTimeSeconds % 60) + 's' : ''}`.trim()
+        : `${actualTimeSeconds}s`,
+      distance: newExercise.distance,
+      calories: newExercise.calories,
+      time: newExercise.time,
+      intensity: newExercise.intensity
+    }
+    
+    const updatedAggregateExercises = [...existingAggregateExercises, newExerciseAggregate]
+    const aggTotalMinutes = updatedAggregateExercises.reduce((sum, ex) => sum + (ex.duration || 0), 0)
+    const aggTotalCalories = updatedAggregateExercises.reduce((sum, ex) => sum + (ex.calories || 0), 0)
+    
+    // TEMPORARILY DISABLED: The daily_exercise table is missing guest_session_id
+    // This causes fatal errors. Exercise history is now fetched directly from activity_sessions.
+    /*
+    if (saveExerciseData) {
+      saveExerciseData.mutate({
+        date: selectedDate || new Date().toISOString().split('T')[0],
+        exercises: updatedAggregateExercises,
+        total_minutes: aggTotalMinutes,
+        total_calories: aggTotalCalories
+      })
+    }
+    */
+
     // Refresh exercise data - the realtime subscription will handle this automatically
     // But also trigger manual refresh for immediate UI update
     setTimeout(() => {
@@ -355,46 +390,8 @@ export default function ExerciseModal({ onClose, selectedDate }) {
 
   return (
     <div className="no-scrollbar space-y-6 text-gray-900 max-h-[70vh] overflow-y-auto">
-      {/* Existing Exercises Display */}
-      {exercisesLoading && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
-          <p className="text-blue-800">Loading exercise data...</p>
-        </div>
-      )}
-      
-      {exercisesLoading === false && existingExercises.length > 0 && (
-        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-          <h4 className="font-semibold text-green-800 mb-3 flex items-center gap-2">
-            <Activity className="w-4 h-4" />
-            Today's Exercises ({existingExercises.length})
-          </h4>
-          <div className="space-y-2">
-            {existingExercises.map((exercise, index) => (
-              <div key={exercise.id} className="bg-white rounded-lg p-3 border border-green-100">
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-3">
-                    <span className="text-lg">🏃</span>
-                    <div>
-                      <p className="font-medium text-gray-900 capitalize">{exercise.type}</p>
-                      <p className="text-sm text-gray-600">
-                        {exercise.duration} min • {exercise.calories} cal • {exercise.time}
-                        {exercise.actual_duration_seconds && exercise.actual_duration_seconds !== exercise.planned_duration_seconds && (
-                          <span className="text-xs text-orange-600 ml-2">
-                            (Actual: {Math.round(exercise.actual_duration_seconds / 60)}min)
-                          </span>
-                        )}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="text-green-600">
-                    <span className="text-xs font-medium">✅ Completed</span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Existing Exercises Display Removed (now correctly displayed in Dashboard History) */}
+
       
 
 

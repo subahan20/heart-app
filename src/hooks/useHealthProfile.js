@@ -16,7 +16,8 @@ export function useHealthProfile() {
   const [loading,        setLoading]        = useState(true)
   const [error,          setError]          = useState(null)
 
-  const activeProfileId = localStorage.getItem('activeProfileId')
+  const rawId = localStorage.getItem('activeProfileId')
+  const activeProfileId = (rawId && rawId !== 'undefined') ? rawId : null
 
   const fetchProfiles = useCallback(async () => {
     try {
@@ -36,7 +37,7 @@ export function useHealthProfile() {
             .is('user_id', null)
         }
 
-        // 2. Fetch all profiles for this user
+        // 2. Fetch all profiles (unified view)
         const { data, error: fetchErr } = await supabase
           .from('profiles')
           .select('*')
@@ -44,7 +45,21 @@ export function useHealthProfile() {
           .order('created_at', { ascending: false })
         
         if (fetchErr) throw fetchErr
-        profilesList = data || []
+        
+        // DEDUPLICATE: Only show unique names
+        const uniqueProfiles = []
+        const seenNames = new Set()
+        
+        if (data) {
+          data.forEach(p => {
+            const nameKey = (p.name || 'Set Name').toLowerCase().trim()
+            if (!seenNames.has(nameKey)) {
+              seenNames.add(nameKey)
+              uniqueProfiles.push(p)
+            }
+          })
+        }
+        profilesList = uniqueProfiles
       } else if (guestId) {
         // 3. Fetch for guest
         const { data, error: guestErr } = await supabase
@@ -142,7 +157,10 @@ export function useHealthProfile() {
       const guestId = aiService.getChatSessionId()
       
       let result
-      if (isAddMode) {
+      // If no ID is provided, we MUST be in add mode (insert)
+      const shouldInsert = isAddMode || !id
+      
+      if (shouldInsert) {
         // Creating a new profile with full details
         const { data, error: insErr } = await supabase
           .from('profiles')

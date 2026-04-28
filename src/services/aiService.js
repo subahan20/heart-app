@@ -121,11 +121,52 @@ export const aiService = {
         throw new Error('AI service unavailable: No API key configured')
       }
 
-      // Format history for Gemini
-      const formattedHistory = history.map(msg => ({
-        role: msg.role === 'user' ? 'user' : 'model',
-        parts: [{ text: msg.message }]
-      }))
+      // 1. Filter out the default welcome message and invalid messages
+      const filteredHistory = history.filter(msg => 
+        msg.message && 
+        msg.message !== "Hi! I'm your heart health assistant. How can I help you today?"
+      );
+      
+      // 2. Consolidate consecutive messages with the same role (Gemini requirement)
+      const consolidatedHistory = [];
+      filteredHistory.forEach(msg => {
+        const lastMsg = consolidatedHistory[consolidatedHistory.length - 1];
+        const role = msg.role === 'user' ? 'user' : 'model';
+        
+        if (lastMsg && lastMsg.role === role) {
+          lastMsg.parts[0].text += "\n" + msg.message;
+        } else {
+          consolidatedHistory.push({
+            role: role,
+            parts: [{ text: msg.message }]
+          });
+        }
+      });
+
+      // 3. Ensure the history starts with a 'user' role
+      while (consolidatedHistory.length > 0 && consolidatedHistory[0].role !== 'user') {
+        consolidatedHistory.shift();
+      }
+
+      // 4. If history now ends with a 'user' role, we must add a dummy model response 
+      // because our NEW message will also be 'user', and roles must alternate.
+      // However, it's easier to just ensure the consolidatedHistory alternates correctly.
+      const formattedHistory = [];
+      consolidatedHistory.forEach((msg, idx) => {
+        // Only add if it strictly alternates
+        if (formattedHistory.length === 0 || formattedHistory[formattedHistory.length - 1].role !== msg.role) {
+          formattedHistory.push(msg);
+        } else {
+          // Merge into previous if role is same (should be handled by consolidation above but safe fallback)
+          formattedHistory[formattedHistory.length - 1].parts[0].text += "\n" + msg.parts[0].text;
+        }
+      });
+
+      // 5. If the last message in history is 'user', we need to add a model placeholder
+      // because we are about to append the CURRENT user message.
+      if (formattedHistory.length > 0 && formattedHistory[formattedHistory.length - 1].role === 'user') {
+        formattedHistory.push({ role: 'model', parts: [{ text: "..." }] });
+      }
 
       // Create system instruction based on user profile
       const systemInstruction = `You are a helpful, empathetic, and knowledgeable heart health assistant. 
@@ -139,35 +180,49 @@ export const aiService = {
         Keep your answers concise, encouraging, and focused on heart health, diet, exercise, and stress management. 
         CRITICAL: Never provide a medical diagnosis. Always advise consulting a doctor for serious concerns.`
 
+      // Prepare the final contents array
+      const contents = [
+        ...formattedHistory,
+        { role: 'user', parts: [{ text: message }] }
+      ]
+
+      // Inject system instruction into the very first user message to ensure it is processed
+      if (contents.length > 0 && contents[0].role === 'user') {
+        contents[0].parts[0].text = `[SYSTEM INSTRUCTION: ${systemInstruction}]\n\n${contents[0].parts[0].text}`;
+      } else {
+        // If for some reason the first message isn't 'user', prepend a hidden system message
+        contents.unshift({ role: 'user', parts: [{ text: `[SYSTEM INSTRUCTION: ${systemInstruction}]\n\nHello` }] });
+        contents.splice(1, 0, { role: 'model', parts: [{ text: `Understood. I am your heart health assistant.` }] });
+      }
+
       // Prepare request payload
       const requestBody = {
-        contents: [
-          ...formattedHistory,
-          { role: 'user', parts: [{ text: message }] }
-        ],
-        systemInstruction: { parts: [{ text: systemInstruction }] },
+        contents: contents,
         generationConfig: {
           temperature: 0.7,
         }
       }
 
       // Call Gemini API
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${geminiApiKey}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${geminiApiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody)
       })
 
+      const data = await response.json()
+
       if (!response.ok) {
-        throw new Error(`Gemini API Error: ${response.status}`)
+        console.error('Gemini API Error details:', data)
+        throw new Error(`API Error: ${response.status} - ${data.error?.message || 'Unknown error'}`)
       }
 
-      const result = await response.json()
-      const responseText = result.candidates?.[0]?.content?.parts?.[0]?.text
-      
-      if (!responseText) {
-        throw new Error('No response from Gemini API')
+      if (!data.candidates?.[0]?.content?.parts?.[0]?.text) {
+        console.error('Gemini API Unexpected Response:', data)
+        throw new Error('AI failed to generate a response')
       }
+
+      const responseText = data.candidates[0].content.parts[0].text
 
       // Try to save to Supabase asynchronously (don't block the UI return)
       try {
@@ -305,7 +360,7 @@ export const aiService = {
       const [meta, base64Data] = base64withMeta.split(',')
       const mimeType = meta.match(/:(.*?);/)?.[1] || 'image/jpeg'
 
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${geminiApiKey}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${geminiApiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -380,7 +435,7 @@ export const aiService = {
         throw new Error('AI service unavailable: No API key configured')
       }
 
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${geminiApiKey}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${geminiApiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -506,7 +561,7 @@ Return ONLY a JSON array (no markdown) like:
 
     try {
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${geminiApiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${geminiApiKey}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -576,7 +631,7 @@ Return ONLY a JSON array (no markdown) like:
         "improvement_tips": "tips to improve next time"
       }`
 
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${geminiApiKey}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${geminiApiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -597,7 +652,9 @@ Return ONLY a JSON array (no markdown) like:
         throw new Error('No response from Gemini API')
       }
       
-      return JSON.parse(text)
+      // Strip markdown wrapping if present
+      const cleanText = text.replace(/^```json\s*/, '').replace(/```$/, '').trim()
+      return JSON.parse(cleanText)
     } catch (error) {
       console.error('Exercise insights generation failed:', error)
       return aiService.getMockExerciseInsights(exerciseData)
@@ -671,7 +728,7 @@ Return ONLY a JSON object with this exact structure:
   "motivational_message": "A short inspiring message"
 }`
 
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${geminiApiKey}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${geminiApiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

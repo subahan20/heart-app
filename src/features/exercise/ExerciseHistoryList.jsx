@@ -113,9 +113,12 @@ export default function ExerciseHistoryList({ data }) {
             {(!isRangeMode || isExpanded) && (
               <div className="p-4 space-y-3">
                 {exercisesList.length === 0 ? (
-                  <div className="text-center py-4">
-                    <p className="text-gray-400 text-sm">No exercises logged for this date.</p>
-                    <p className="text-gray-300 text-xs mt-1">Start an exercise session to track your fitness.</p>
+                  <div className="text-center py-8 mt-6">
+                    <div className="w-16 h-16 bg-gradient-to-br from-slate-100 to-slate-200 rounded-full flex items-center justify-center mx-auto mb-4 border border-slate-300">
+                      <Dumbbell className="w-8 h-8 text-slate-400" />
+                    </div>
+                    <p className="text-slate-500 text-sm font-medium">No exercises logged for this date.</p>
+                    <p className="text-slate-400 text-xs mt-2">Start an exercise session to track your fitness.</p>
                   </div>
                 ) : (
                   exercisesList.map((exercise, i) => {

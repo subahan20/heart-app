@@ -34,18 +34,20 @@ export function useDailyTracking() {
           return q.maybeSingle()
         }
 
-        const [diet, sleep, water, stress] = await Promise.all([
+        const [diet, sleep, water, stress, exercise] = await Promise.all([
           runQuery('diet_plan'),
           runQuery('daily_sleep'),
           runQuery('daily_water'),
-          runQuery('daily_stress')
+          runQuery('daily_stress'),
+          runQuery('daily_exercise')
         ])
 
         return {
           diet:   diet.data,
           sleep:  sleep.data,
           water:  water.data,
-          stress: stress.data
+          stress: stress.data,
+          exercise: exercise.data
         }
       },
       enabled: !!date,
@@ -83,14 +85,15 @@ export function useDailyTracking() {
           return data || []
         }
 
-        const [diet, sleep, water, stress] = await Promise.all([
+        const [diet, sleep, water, stress, exercise] = await Promise.all([
           fetchTable('diet_plan'),
           fetchTable('daily_sleep'),
           fetchTable('daily_water'),
-          fetchTable('daily_stress')
+          fetchTable('daily_stress'),
+          fetchTable('daily_exercise')
         ])
 
-        return { diet, sleep, water, stress }
+        return { diet, sleep, water, stress, exercise }
       },
       enabled: !!daysOrStart
     })
@@ -132,6 +135,7 @@ export function useDailyTracking() {
   const waterMutation = createMutation('daily_water')
   const sleepMutation = createMutation('daily_sleep')
   const stressMutation = createMutation('daily_stress')
+  const exerciseMutation = createMutation('daily_exercise')
 
   return {
     useDailyData,
@@ -140,6 +144,7 @@ export function useDailyTracking() {
     saveWaterData: waterMutation.mutateAsync,
     saveSleepData: sleepMutation.mutateAsync,
     saveStressData: stressMutation.mutateAsync,
-    isSaving: dietMutation.isPending || waterMutation.isPending || sleepMutation.isPending
+    saveExerciseData: exerciseMutation,
+    isSaving: dietMutation.isPending || waterMutation.isPending || sleepMutation.isPending || exerciseMutation.isPending
   }
 }
